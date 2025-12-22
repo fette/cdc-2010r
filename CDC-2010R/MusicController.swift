@@ -13,6 +13,8 @@ import ApplicationServices
 struct LoadedDisc {
     let sourceType: String
     let sourceIdentifier: String
+    let albumTitle: String?
+    let artistName: String?
     let artworkData: Data?
     let trackIDs: [String]
 }
@@ -110,7 +112,15 @@ final class MusicController {
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
-            if (count of artworks of t) > 0 then set artData to (data of artwork 1 of t)
+            if (count of artworks of t) > 0 then
+                try
+                    set artData to (raw data of artwork 1 of t)
+                on error
+                    try
+                        set artData to (data of artwork 1 of t)
+                    end try
+                end try
+            end if
             return {"ALBUM", albumName, artistName, artData, trackInfoList}
         end tell
         """
@@ -124,16 +134,29 @@ final class MusicController {
             set pl to current playlist
             if pl is missing value then return {"ERROR","NO_PLAYLIST"}
             set pid to persistent ID of pl as text
+            set plName to name of pl as text
             set trackInfoList to {}
             repeat with tr in tracks of pl
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
+            set albumName to ""
+            set artistName to ""
             if (count of tracks of pl) > 0 then
                 set t to item 1 of tracks of pl
-                if (count of artworks of t) > 0 then set artData to (data of artwork 1 of t)
+                if (count of artworks of t) > 0 then
+                    try
+                        set artData to (raw data of artwork 1 of t)
+                    on error
+                        try
+                            set artData to (data of artwork 1 of t)
+                        end try
+                    end try
+                end if
+                set albumName to album of t
+                set artistName to artist of t
             end if
-            return {"PLAYLIST", pid, artData, trackInfoList}
+            return {"PLAYLIST", pid, plName, artData, trackInfoList, albumName, artistName}
         end tell
         """
 
@@ -190,6 +213,8 @@ final class MusicController {
             return .success(LoadedDisc(
                 sourceType: "album",
                 sourceIdentifier: identifier,
+                albumTitle: albumName,
+                artistName: artistName,
                 artworkData: artData,
                 trackIDs: trackIDs
             ))
@@ -204,12 +229,15 @@ final class MusicController {
             if isErrorDescriptor(descriptor, code: "NO_PLAYLIST") {
                 return .failure(.noPlaylistFound)
             }
-            guard descriptor.numberOfItems >= 4 else {
+            guard descriptor.numberOfItems >= 5 else {
                 return .failure(.scriptFailed("Unexpected playlist result."))
             }
             let playlistID = descriptor.atIndex(2)?.stringValue ?? "unknown-playlist"
-            let artData = descriptor.atIndex(3)?.data
-            let trackInfoDescriptor = descriptor.atIndex(4)
+            let playlistName = descriptor.atIndex(3)?.stringValue ?? "Playlist"
+            let artData = descriptor.atIndex(4)?.data
+            let trackInfoDescriptor = descriptor.atIndex(5)
+            let albumName = descriptor.atIndex(6)?.stringValue
+            let artistName = descriptor.atIndex(7)?.stringValue
             let trackInfos = parseTrackInfos(from: trackInfoDescriptor)
             let trackIDs = trackInfos.sorted {
                 if $0.discNumber == $1.discNumber {
@@ -220,6 +248,8 @@ final class MusicController {
             return .success(LoadedDisc(
                 sourceType: "playlist",
                 sourceIdentifier: playlistID,
+                albumTitle: albumName?.isEmpty == false ? albumName : playlistName,
+                artistName: artistName?.isEmpty == false ? artistName : nil,
                 artworkData: artData,
                 trackIDs: trackIDs
             ))

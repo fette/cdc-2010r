@@ -11,6 +11,8 @@ struct DiscSlot: Codable, Identifiable, Equatable {
     let slotIndex: Int
     var sourceType: String?
     var playlistPersistentID: String?
+    var albumTitle: String?
+    var artistName: String?
     var artworkPNGBase64: String?
     var trackIDs: [String]?
 
@@ -21,12 +23,16 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         slotIndex: Int,
         sourceType: String? = nil,
         playlistPersistentID: String? = nil,
+        albumTitle: String? = nil,
+        artistName: String? = nil,
         artworkPNGBase64: String? = nil,
         trackIDs: [String]? = nil
     ) {
         self.slotIndex = slotIndex
         self.sourceType = sourceType
         self.playlistPersistentID = playlistPersistentID
+        self.albumTitle = albumTitle
+        self.artistName = artistName
         self.artworkPNGBase64 = artworkPNGBase64
         self.trackIDs = trackIDs
     }

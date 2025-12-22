@@ -111,7 +111,9 @@ final class AppState: ObservableObject {
         var slot = discSlots[slotPosition]
         slot.sourceType = loaded.sourceType
         slot.playlistPersistentID = loaded.sourceIdentifier
-        if let data = loaded.artworkData {
+        slot.albumTitle = loaded.albumTitle
+        slot.artistName = loaded.artistName
+        if let data = loaded.artworkData, !data.isEmpty {
             slot.artworkPNGBase64 = data.base64EncodedString()
         }
         slot.trackIDs = loaded.trackIDs

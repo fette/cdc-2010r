@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
@@ -61,13 +62,22 @@ private struct ClosedLidView: View {
                 ))
                 .overlay(
                     VStack(spacing: 8) {
+                        ArtworkView(base64: activeArtwork)
+                            .frame(maxWidth: 220, maxHeight: 220)
                         Text(activeDiscTitle)
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        if let detail = activeDiscDetail {
-                            Text(detail)
+                        if let albumTitle = activeAlbumTitle {
+                            Text(albumTitle)
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if let artistName = activeArtistName {
+                            Text(artistName)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
                 )
@@ -113,14 +123,16 @@ private struct ClosedLidView: View {
         return slot?.isLoaded == true ? "Loaded Disc \(appState.playback.activeDiscIndex)" : "Empty Disc"
     }
 
-    private var activeDiscDetail: String? {
-        guard let slot = appState.discSlots.first(where: { $0.slotIndex == appState.playback.activeDiscIndex }),
-              slot.isLoaded else {
-            return nil
-        }
-        let source = slot.sourceType ?? "unknown"
-        let trackCount = slot.trackIDs?.count ?? 0
-        return "\(source.capitalized) • \(trackCount) tracks"
+    private var activeArtwork: String? {
+        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.artworkPNGBase64
+    }
+
+    private var activeAlbumTitle: String? {
+        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.albumTitle
+    }
+
+    private var activeArtistName: String? {
+        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.artistName
     }
 }
 
@@ -200,12 +212,13 @@ private struct DiscSlotCard: View {
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ))
+                ArtworkView(base64: slot.artworkPNGBase64)
                 if isActive {
                     Image(systemName: "lock.fill")
                         .font(.title2)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text(slot.isLoaded ? "Loaded" : "Empty")
+                } else if !slot.isLoaded {
+                    Text("Empty")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -237,21 +250,45 @@ private struct DiscDetailView: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text(detailLine)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if let identifier = slot.playlistPersistentID {
-                Text(identifier)
+            if let albumTitle = slot.albumTitle {
+                Text(albumTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            if let artistName = slot.artistName {
+                Text(artistName)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
     }
+}
 
-    private var detailLine: String {
-        let source = slot.sourceType ?? "unknown"
-        let trackCount = slot.trackIDs?.count ?? 0
-        return "\(source.capitalized) • \(trackCount) tracks"
+private struct ArtworkView: View {
+    let base64: String?
+
+    var body: some View {
+        if let image = decodeImage() {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.12))
+                .overlay(
+                    Image(systemName: "music.note")
+                        .foregroundStyle(.secondary)
+                )
+        }
+    }
+
+    private func decodeImage() -> NSImage? {
+        guard let base64, let data = Data(base64Encoded: base64) else {
+            return nil
+        }
+        return NSImage(data: data)
     }
 }
