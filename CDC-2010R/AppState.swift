@@ -12,11 +12,17 @@ final class AppState: ObservableObject {
     @Published var discSlots: [DiscSlot]
     @Published var playback: PlaybackState
     @Published var statusMessage: String?
+    @Published var nowPlayingDiscIndex: Int?
+    @Published var nowPlayingTrackNumber: Int?
+    @Published var nowPlayingElapsedSeconds: TimeInterval?
+    let ledFontName: String
 
     private var cancellables = Set<AnyCancellable>()
     private let stateURL: URL
+    private var nowPlayingTimer: AnyCancellable?
 
-    init() {
+    init(ledFontName: String = "16SegmentsBasic") {
+        self.ledFontName = ledFontName
         self.stateURL = AppState.defaultStateURL()
         if let loaded = AppState.loadState(from: stateURL) {
             self.discSlots = AppState.normalizedSlots(from: loaded.discSlots)
@@ -32,6 +38,12 @@ final class AppState: ObservableObject {
                 self?.saveState()
             }
             .store(in: &cancellables)
+
+        nowPlayingTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.refreshNowPlayingDisc()
+            }
     }
 
     func setActiveDisc(_ index: Int) {
@@ -61,6 +73,62 @@ final class AppState: ObservableObject {
                     #else
                     self.statusMessage = error.errorDescription
                     #endif
+                }
+            }
+        }
+    }
+
+    func playDisc(slotIndex: Int) {
+        guard let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) else {
+            return
+        }
+        guard let trackIDs = slot.trackIDs, !trackIDs.isEmpty else {
+            statusMessage = "Load a disc before playing."
+            return
+        }
+        statusMessage = "Starting Disc \(slotIndex)..."
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.playDisc(trackIDs: trackIDs, discIndex: slotIndex)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.playback.activeDiscIndex = slotIndex
+                case .failure(let error):
+                    self.statusMessage = error.errorDescription
+                }
+            }
+        }
+    }
+
+    func playPause() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.playPause()
+            DispatchQueue.main.async { [weak self] in
+                if case .failure(let error) = result {
+                    self?.statusMessage = error.errorDescription
+                }
+            }
+        }
+    }
+
+    func nextTrack() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.nextTrack()
+            DispatchQueue.main.async { [weak self] in
+                if case .failure(let error) = result {
+                    self?.statusMessage = error.errorDescription
+                }
+            }
+        }
+    }
+
+    func previousTrack() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.previousTrack()
+            DispatchQueue.main.async { [weak self] in
+                if case .failure(let error) = result {
+                    self?.statusMessage = error.errorDescription
                 }
             }
         }
@@ -118,6 +186,42 @@ final class AppState: ObservableObject {
         }
         slot.trackIDs = loaded.trackIDs
         discSlots[slotPosition] = slot
+    }
+
+    private func refreshNowPlayingDisc() {
+        DispatchQueue.global(qos: .utility).async {
+            let result = MusicController.shared.currentTrackPersistentID()
+            let trackResult = MusicController.shared.currentTrackNumber()
+            let positionResult = MusicController.shared.currentPlayerPosition()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let persistentID):
+                    if let match = self.discSlots.first(where: { $0.trackIDs?.contains(persistentID) == true }) {
+                        self.nowPlayingDiscIndex = match.slotIndex
+                        if self.playback.activeDiscIndex != match.slotIndex {
+                            self.playback.activeDiscIndex = match.slotIndex
+                        }
+                    } else {
+                        self.nowPlayingDiscIndex = nil
+                    }
+                case .failure:
+                    self.nowPlayingDiscIndex = nil
+                }
+                switch trackResult {
+                case .success(let number):
+                    self.nowPlayingTrackNumber = number > 0 ? number : nil
+                case .failure:
+                    self.nowPlayingTrackNumber = nil
+                }
+                switch positionResult {
+                case .success(let position):
+                    self.nowPlayingElapsedSeconds = position > 0 ? position : nil
+                case .failure:
+                    self.nowPlayingElapsedSeconds = nil
+                }
+            }
+        }
     }
 
     private static func defaultStateURL() -> URL {

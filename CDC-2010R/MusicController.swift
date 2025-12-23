@@ -74,6 +74,166 @@ final class MusicController {
         return "Diagnostics: musicRunning=\(musicRunning), appleEventsEntitlement=\(entitlement), usageDescription=\(usageDescription)"
     }
 
+    func currentTrackPersistentID() -> Result<String, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            set t to current track
+            if t is missing value then return {"ERROR","NO_CURRENT_TRACK"}
+            return {persistent ID of t as text}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            if isErrorDescriptor(descriptor, code: "NO_CURRENT_TRACK") {
+                return .failure(.noCurrentTrack)
+            }
+            guard descriptor.numberOfItems >= 1 else {
+                return .failure(.scriptFailed("Unexpected current track result."))
+            }
+            let persistentID = descriptor.atIndex(1)?.stringValue ?? ""
+            if persistentID.isEmpty {
+                return .failure(.scriptFailed("Missing track identifier."))
+            }
+            return .success(persistentID)
+        }
+    }
+
+    func currentTrackNumber() -> Result<Int, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            set t to current track
+            if t is missing value then return {"ERROR","NO_CURRENT_TRACK"}
+            return {track number of t}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            if isErrorDescriptor(descriptor, code: "NO_CURRENT_TRACK") {
+                return .failure(.noCurrentTrack)
+            }
+            guard descriptor.numberOfItems >= 1 else {
+                return .failure(.scriptFailed("Unexpected track number result."))
+            }
+            let number = descriptor.atIndex(1)?.int32Value ?? 0
+            return .success(Int(number))
+        }
+    }
+
+    func currentPlayerPosition() -> Result<TimeInterval, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            set t to current track
+            if t is missing value then return {"ERROR","NO_CURRENT_TRACK"}
+            return {player position}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            if isErrorDescriptor(descriptor, code: "NO_CURRENT_TRACK") {
+                return .failure(.noCurrentTrack)
+            }
+            guard descriptor.numberOfItems >= 1 else {
+                return .failure(.scriptFailed("Unexpected player position result."))
+            }
+            let position = descriptor.atIndex(1)?.doubleValue ?? 0
+            return .success(position)
+        }
+    }
+
+    func playTrack(persistentID: String) -> Result<Void, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            set matches to (every track of library playlist 1 whose persistent ID is "\(persistentID)")
+            if (count of matches) is 0 then return {"ERROR","NO_TRACK"}
+            play item 1 of matches
+            return {"OK"}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            if isErrorDescriptor(descriptor, code: "NO_TRACK") {
+                return .failure(.scriptFailed("Track not found in library."))
+            }
+            return .success(())
+        }
+    }
+
+    func playDisc(trackIDs: [String], discIndex: Int) -> Result<Void, MusicControllerError> {
+        guard !trackIDs.isEmpty else {
+            return .failure(.scriptFailed("Disc has no tracks."))
+        }
+        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let playlistName = "CDC-2010R Disc \(discIndex)"
+        let script = """
+        tell application id "com.apple.Music"
+            set plName to "\(appleScriptStringLiteral(playlistName))"
+            if not (exists user playlist plName) then
+                make new user playlist with properties {name:plName}
+            end if
+            set pl to user playlist plName
+            set existingTracks to tracks of pl
+            repeat with tr in existingTracks
+                delete tr
+            end repeat
+            set idList to {\(escapedIDs)}
+            repeat with tid in idList
+                set matches to (every track of library playlist 1 whose persistent ID is tid)
+                if (count of matches) > 0 then
+                    duplicate item 1 of matches to pl
+                end if
+            end repeat
+            play pl
+            return {"OK"}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success:
+            return .success(())
+        }
+    }
+
+    func playPause() -> Result<Void, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            playpause
+        end tell
+        """
+        return runSimple(script: script)
+    }
+
+    func nextTrack() -> Result<Void, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            next track
+        end tell
+        """
+        return runSimple(script: script)
+    }
+
+    func previousTrack() -> Result<Void, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            previous track
+        end tell
+        """
+        return runSimple(script: script)
+    }
+
     @MainActor
     func requestAutomationPermission() -> Result<Void, MusicControllerError> {
         var targetDesc = AEAddressDesc()
@@ -283,6 +443,22 @@ final class MusicController {
         return infos
     }
 
+    private func appleScriptStringLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func runSimple(script: String) -> Result<Void, MusicControllerError> {
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success:
+            return .success(())
+        }
+    }
+
     private func ensureMusicRunning() -> Bool {
         if isMusicRunning() {
             return true
@@ -290,11 +466,7 @@ final class MusicController {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Music") else {
             return false
         }
-        do {
-            try NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        } catch {
-            return false
-        }
+        try? NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
         for _ in 0..<10 {
             if isMusicRunning() {
                 return true

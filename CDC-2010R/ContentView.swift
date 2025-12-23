@@ -21,6 +21,14 @@ struct ContentView: View {
         }
         .frame(minWidth: 760, minHeight: 560)
         .padding(24)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.08, green: 0.09, blue: 0.12), Color(red: 0.04, green: 0.05, blue: 0.07)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -37,6 +45,7 @@ private struct ClosedLidView: View {
             HStack {
                 Text("Sherwood CDC-2010R")
                     .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.white)
                 Spacer()
                 Button("Open Lid") {
                     appState.toggleLid()
@@ -47,92 +56,106 @@ private struct ClosedLidView: View {
                 ForEach(appState.discSlots) { slot in
                     DiscButton(
                         title: "DISC \(slot.slotIndex)",
-                        isActive: slot.slotIndex == appState.playback.activeDiscIndex
+                        isActive: slot.slotIndex == displayedDiscIndex
                     ) {
-                        appState.setActiveDisc(slot.slotIndex)
+                        appState.playDisc(slotIndex: slot.slotIndex)
                     }
                 }
             }
 
             RoundedRectangle(cornerRadius: 16)
                 .fill(LinearGradient(
-                    colors: [.gray.opacity(0.2), .gray.opacity(0.05)],
+                    colors: [Color.white.opacity(0.08), Color.white.opacity(0.02)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ))
                 .overlay(
                     VStack(spacing: 8) {
-                        ArtworkView(base64: activeArtwork)
+                        ArtworkView(base64: displayedArtwork)
                             .frame(maxWidth: 220, maxHeight: 220)
-                        Text(activeDiscTitle)
+                        Text(displayedDiscTitle)
                             .font(.title3.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        if let albumTitle = activeAlbumTitle {
+                            .foregroundStyle(Color.white.opacity(0.85))
+                        if let albumTitle = displayedAlbumTitle {
                             Text(albumTitle)
                                 .font(.callout.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.white.opacity(0.7))
                                 .lineLimit(1)
                         }
-                        if let artistName = activeArtistName {
+                        if let artistName = displayedArtistName {
                             Text(artistName)
                                 .font(.callout)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.white.opacity(0.6))
                                 .lineLimit(1)
                         }
+                        LEDDisplayView(
+                            trackNumber: appState.nowPlayingTrackNumber,
+                            elapsedSeconds: appState.nowPlayingElapsedSeconds,
+                            fontName: appState.ledFontName
+                        )
+                        .frame(maxWidth: 260)
                     }
                 )
                 .frame(maxWidth: 360, maxHeight: 360)
 
             HStack(spacing: 24) {
                 Button {
+                    appState.previousTrack()
                 } label: {
                     Image(systemName: "backward.fill")
                         .font(.title2)
                 }
-                .disabled(true)
 
                 Button {
+                    appState.playPause()
                 } label: {
                     Image(systemName: "playpause.fill")
                         .font(.title2)
                 }
-                .disabled(true)
 
                 Button {
+                    appState.nextTrack()
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.title2)
                 }
-                .disabled(true)
             }
 
             Text("Mode: \(appState.playback.mode.displayName)")
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.6))
 
             if let status = appState.statusMessage {
                 Text(status)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.6))
             }
         }
     }
 
-    private var activeDiscTitle: String {
-        let slot = appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }
-        return slot?.isLoaded == true ? "Loaded Disc \(appState.playback.activeDiscIndex)" : "Empty Disc"
+    private var displayedDiscIndex: Int {
+        appState.nowPlayingDiscIndex ?? appState.playback.activeDiscIndex
     }
 
-    private var activeArtwork: String? {
-        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.artworkPNGBase64
+    private var displayedDiscTitle: String {
+        guard let slot = displayedSlot else { return "No Disc Playing" }
+        return slot.isLoaded ? "Disc \(slot.slotIndex)" : "Empty Disc"
     }
 
-    private var activeAlbumTitle: String? {
-        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.albumTitle
+    private var displayedArtwork: String? {
+        displayedSlot?.artworkPNGBase64
     }
 
-    private var activeArtistName: String? {
-        appState.discSlots.first { $0.slotIndex == appState.playback.activeDiscIndex }?.artistName
+    private var displayedAlbumTitle: String? {
+        displayedSlot?.albumTitle
+    }
+
+    private var displayedArtistName: String? {
+        displayedSlot?.artistName
+    }
+
+    private var displayedSlot: DiscSlot? {
+        appState.discSlots.first { $0.slotIndex == displayedDiscIndex }
     }
 }
 
@@ -150,6 +173,7 @@ private struct OpenLidView: View {
             HStack {
                 Text("Preparation Mode")
                     .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.white)
                 Spacer()
                 Button("Close Lid") {
                     appState.toggleLid()
@@ -170,7 +194,7 @@ private struct OpenLidView: View {
             if let status = appState.statusMessage {
                 Text(status)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.6))
             }
         }
     }
@@ -185,13 +209,13 @@ private struct DiscButton: View {
         Button(action: action) {
             Text(title)
                 .font(.headline)
-                .foregroundStyle(isActive ? Color.white : Color.primary)
+                .foregroundStyle(isActive ? Color.black : Color.white.opacity(0.85))
                 .padding(.vertical, 8)
                 .padding(.horizontal, 14)
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(isActive ? Color.accentColor : Color.gray.opacity(0.15))
+                        .fill(isActive ? Color(red: 0.7, green: 0.8, blue: 0.95) : Color.white.opacity(0.08))
                 )
         }
         .buttonStyle(.plain)
@@ -208,7 +232,7 @@ private struct DiscSlotCard: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(LinearGradient(
-                        colors: [.gray.opacity(0.2), .gray.opacity(0.05)],
+                        colors: [Color.white.opacity(0.08), Color.white.opacity(0.02)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ))
@@ -216,17 +240,18 @@ private struct DiscSlotCard: View {
                 if isActive {
                     Image(systemName: "lock.fill")
                         .font(.title2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.white.opacity(0.7))
                 } else if !slot.isLoaded {
                     Text("Empty")
                         .font(.callout.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.white.opacity(0.7))
                 }
             }
             .frame(height: 160)
 
             Text("Disc \(slot.slotIndex)")
                 .font(.headline)
+                .foregroundStyle(Color.white.opacity(0.9))
 
             Button("Load from Music") {
                 onLoad()
@@ -240,7 +265,7 @@ private struct DiscSlotCard: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(isActive ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
+                .strokeBorder(isActive ? Color(red: 0.7, green: 0.8, blue: 0.95) : Color.white.opacity(0.15), lineWidth: 1)
         )
     }
 }
@@ -253,13 +278,13 @@ private struct DiscDetailView: View {
             if let albumTitle = slot.albumTitle {
                 Text(albumTitle)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.7))
                     .lineLimit(1)
             }
             if let artistName = slot.artistName {
                 Text(artistName)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.white.opacity(0.6))
                     .lineLimit(1)
             }
         }
