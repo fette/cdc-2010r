@@ -9,7 +9,12 @@ import SwiftUI
 
 @main
 struct CDC_2010RApp: App {
-    @StateObject private var appState = AppState()
+    @StateObject private var appState: AppState
+
+    init() {
+        let fontName = FontRegistrar.register()
+        _appState = StateObject(wrappedValue: AppState(ledFontName: fontName ?? "led16sgmnt2-Italic"))
+    }
 
     var body: some Scene {
         WindowGroup {
