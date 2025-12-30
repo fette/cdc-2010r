@@ -42,24 +42,26 @@ private struct ClosedLidView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            HStack {
-                Text("Sherwood CDC-2010R")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Color.white)
-                Spacer()
-                Button("Open Lid") {
-                    appState.toggleLid()
-                }
-            }
-
             HStack(alignment: .top, spacing: 32) {
                 VStack(spacing: 8) {
                     ArtworkView(base64: displayedArtwork)
-                        .frame(maxWidth: 220, maxHeight: 220)
+                        .frame(maxWidth: 640, maxHeight: 640)
             }
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 680)
 
                 VStack(alignment: .leading, spacing: 18) {
+                    HStack {
+                        Text("Sherwood CDC-2010R")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(Color.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        Spacer()
+                        Button("Open Lid") {
+                            appState.toggleLid()
+                        }
+                    }
+
                     VStack(alignment: .leading, spacing: 6) {
                         Text("DISC SELECT")
                             .font(.caption.weight(.semibold))
@@ -106,14 +108,14 @@ private struct ClosedLidView: View {
                                 .font(.title2)
                         }
                     }
+
+                    if let status = appState.statusMessage {
+                        Text(status)
+                            .font(.callout)
+                            .foregroundStyle(Color.white.opacity(0.6))
+                    }
                 }
                 .frame(maxWidth: 320, alignment: .leading)
-            }
-
-            if let status = appState.statusMessage {
-                Text(status)
-                    .font(.callout)
-                    .foregroundStyle(Color.white.opacity(0.6))
             }
         }
     }

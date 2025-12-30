@@ -158,15 +158,28 @@ final class MusicController {
                         set resolvedArtist to artist of t
                     end try
                 end if
-                if (count of artworks of t) > 0 then
-                    try
-                        set artData to (raw data of artwork 1 of t)
-                    on error
+                set bestSize to 0
+                try
+                    repeat with aw in artworks of t
+                        set candidate to ""
                         try
-                            set artData to (data of artwork 1 of t)
+                            set candidate to (raw data of aw)
+                        on error
+                            try
+                                set candidate to (data of aw)
+                            end try
                         end try
-                    end try
-                end if
+                        if candidate is not "" then
+                            try
+                                set candidateSize to length of candidate
+                                if candidateSize > bestSize then
+                                    set bestSize to candidateSize
+                                    set artData to candidate
+                                end if
+                            end try
+                        end if
+                    end repeat
+                end try
             end try
             return {"ALBUM", targetAlbum, resolvedArtist, artData, trackInfoList}
         end tell
@@ -425,15 +438,28 @@ final class MusicController {
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
-            if (count of artworks of t) > 0 then
-                try
-                    set artData to (raw data of artwork 1 of t)
-                on error
+            set bestSize to 0
+            try
+                repeat with aw in artworks of t
+                    set candidate to ""
                     try
-                        set artData to (data of artwork 1 of t)
+                        set candidate to (raw data of aw)
+                    on error
+                        try
+                            set candidate to (data of aw)
+                        end try
                     end try
-                end try
-            end if
+                    if candidate is not "" then
+                        try
+                            set candidateSize to length of candidate
+                            if candidateSize > bestSize then
+                                set bestSize to candidateSize
+                                set artData to candidate
+                            end if
+                        end try
+                    end if
+                end repeat
+            end try
             return {"ALBUM", albumName, artistName, artData, trackInfoList}
         end tell
         """
@@ -457,15 +483,28 @@ final class MusicController {
             set artistName to ""
             if (count of tracks of pl) > 0 then
                 set t to item 1 of tracks of pl
-                if (count of artworks of t) > 0 then
-                    try
-                        set artData to (raw data of artwork 1 of t)
-                    on error
+                set bestSize to 0
+                try
+                    repeat with aw in artworks of t
+                        set candidate to ""
                         try
-                            set artData to (data of artwork 1 of t)
+                            set candidate to (raw data of aw)
+                        on error
+                            try
+                                set candidate to (data of aw)
+                            end try
                         end try
-                    end try
-                end if
+                        if candidate is not "" then
+                            try
+                                set candidateSize to length of candidate
+                                if candidateSize > bestSize then
+                                    set bestSize to candidateSize
+                                    set artData to candidate
+                                end if
+                            end try
+                        end if
+                    end repeat
+                end try
                 set albumName to album of t
                 set artistName to artist of t
             end if
