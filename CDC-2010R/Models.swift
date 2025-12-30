@@ -15,6 +15,7 @@ struct DiscSlot: Codable, Identifiable, Equatable {
     var artistName: String?
     var artworkPNGBase64: String?
     var trackIDs: [String]?
+    var trackNumbersByID: [String: Int]?
 
     var id: Int { slotIndex }
     var isLoaded: Bool { playlistPersistentID != nil }
@@ -26,7 +27,8 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         albumTitle: String? = nil,
         artistName: String? = nil,
         artworkPNGBase64: String? = nil,
-        trackIDs: [String]? = nil
+        trackIDs: [String]? = nil,
+        trackNumbersByID: [String: Int]? = nil
     ) {
         self.slotIndex = slotIndex
         self.sourceType = sourceType
@@ -35,10 +37,25 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         self.artistName = artistName
         self.artworkPNGBase64 = artworkPNGBase64
         self.trackIDs = trackIDs
+        self.trackNumbersByID = trackNumbersByID
     }
 
     static func emptySlots() -> [DiscSlot] {
         (1...5).map { DiscSlot(slotIndex: $0) }
+    }
+}
+
+struct AlbumSuggestion: Identifiable, Hashable {
+    let albumTitle: String
+    let artistName: String?
+
+    var id: String {
+        let artist = artistName?.lowercased() ?? ""
+        return "\(albumTitle.lowercased())|\(artist)"
+    }
+
+    var subtitle: String {
+        artistName?.isEmpty == false ? artistName! : "Unknown Artist"
     }
 }
 

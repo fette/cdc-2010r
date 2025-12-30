@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import Foundation
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
@@ -19,7 +20,6 @@ struct ContentView: View {
                 ClosedLidView()
             }
         }
-        .frame(minWidth: 760, minHeight: 560)
         .padding(24)
         .background(
             LinearGradient(
@@ -52,78 +52,63 @@ private struct ClosedLidView: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                ForEach(appState.discSlots) { slot in
-                    DiscButton(
-                        title: "DISC \(slot.slotIndex)",
-                        isActive: slot.slotIndex == displayedDiscIndex
-                    ) {
-                        appState.playDisc(slotIndex: slot.slotIndex)
+            HStack(alignment: .top, spacing: 32) {
+                VStack(spacing: 8) {
+                    ArtworkView(base64: displayedArtwork)
+                        .frame(maxWidth: 220, maxHeight: 220)
+            }
+            .frame(maxWidth: 320)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("DISC SELECT")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.7))
+                        HStack(spacing: 16) {
+                            ForEach(appState.discSlots) { slot in
+                                DiscSelectButton(
+                                    discNumber: slot.slotIndex
+                                ) {
+                                    appState.playDisc(slotIndex: slot.slotIndex)
+                                }
+                            }
+                        }
+                    }
+
+                    LEDDisplayView(
+                        trackNumber: appState.nowPlayingTrackNumber,
+                        elapsedSeconds: appState.nowPlayingElapsedSeconds,
+                        fontName: appState.ledFontName,
+                        discSlots: appState.discSlots,
+                        playingDiscIndex: appState.nowPlayingDiscIndex
+                    )
+                    .frame(maxWidth: 260)
+
+                    HStack(spacing: 24) {
+                        Button {
+                            appState.previousTrack()
+                        } label: {
+                            Image(systemName: "backward.fill")
+                                .font(.title2)
+                        }
+
+                        Button {
+                            appState.playPause()
+                        } label: {
+                            Image(systemName: "playpause.fill")
+                                .font(.title2)
+                        }
+
+                        Button {
+                            appState.nextTrack()
+                        } label: {
+                            Image(systemName: "forward.fill")
+                                .font(.title2)
+                        }
                     }
                 }
+                .frame(maxWidth: 320, alignment: .leading)
             }
-
-            RoundedRectangle(cornerRadius: 16)
-                .fill(LinearGradient(
-                    colors: [Color.white.opacity(0.08), Color.white.opacity(0.02)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-                .overlay(
-                    VStack(spacing: 8) {
-                        ArtworkView(base64: displayedArtwork)
-                            .frame(maxWidth: 220, maxHeight: 220)
-                        Text(displayedDiscTitle)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(Color.white.opacity(0.85))
-                        if let albumTitle = displayedAlbumTitle {
-                            Text(albumTitle)
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.7))
-                                .lineLimit(1)
-                        }
-                        if let artistName = displayedArtistName {
-                            Text(artistName)
-                                .font(.callout)
-                                .foregroundStyle(Color.white.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                        LEDDisplayView(
-                            trackNumber: appState.nowPlayingTrackNumber,
-                            elapsedSeconds: appState.nowPlayingElapsedSeconds,
-                            fontName: appState.ledFontName
-                        )
-                        .frame(maxWidth: 260)
-                    }
-                )
-                .frame(maxWidth: 360, maxHeight: 360)
-
-            HStack(spacing: 24) {
-                Button {
-                    appState.previousTrack()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.title2)
-                }
-
-                Button {
-                    appState.playPause()
-                } label: {
-                    Image(systemName: "playpause.fill")
-                        .font(.title2)
-                }
-
-                Button {
-                    appState.nextTrack()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.title2)
-                }
-            }
-
-            Text("Mode: \(appState.playback.mode.displayName)")
-                .font(.callout)
-                .foregroundStyle(Color.white.opacity(0.6))
 
             if let status = appState.statusMessage {
                 Text(status)
@@ -135,11 +120,6 @@ private struct ClosedLidView: View {
 
     private var displayedDiscIndex: Int {
         appState.nowPlayingDiscIndex ?? appState.playback.activeDiscIndex
-    }
-
-    private var displayedDiscTitle: String {
-        guard let slot = displayedSlot else { return "No Disc Playing" }
-        return slot.isLoaded ? "Disc \(slot.slotIndex)" : "Empty Disc"
     }
 
     private var displayedArtwork: String? {
@@ -187,6 +167,10 @@ private struct OpenLidView: View {
                         isActive: slot.slotIndex == appState.playback.activeDiscIndex
                     ) {
                         appState.loadDisc(slotIndex: slot.slotIndex)
+                    } onRemove: {
+                        appState.removeDisc(slotIndex: slot.slotIndex)
+                    } onPasteArtwork: {
+                        appState.pasteArtwork(slotIndex: slot.slotIndex)
                     }
                 }
             }
@@ -200,32 +184,59 @@ private struct OpenLidView: View {
     }
 }
 
-private struct DiscButton: View {
-    let title: String
-    let isActive: Bool
+private struct DiscSelectButton: View {
+    let discNumber: Int
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(isActive ? Color.black : Color.white.opacity(0.85))
-                .padding(.vertical, 8)
-                .padding(.horizontal, 14)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isActive ? Color(red: 0.7, green: 0.8, blue: 0.95) : Color.white.opacity(0.08))
-                )
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .fill(RadialGradient(
+                            colors: [
+                                Color.white.opacity(1),
+                                Color.black.opacity(1)
+                            ],
+                            center: UnitPoint(x: 0.5, y: 0.2),
+                            startRadius: 1,
+                            endRadius: 10
+                        ).opacity(0.8))
+                        .overlay(
+                            Circle()
+                                .stroke(Color.black.opacity(1), lineWidth: 3.0)
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
+                                .padding(1.2)
+                        )
+                        .shadow(color: Color.white.opacity(0.2), radius: 0, x: 0, y: 1)
+                }
+                .frame(width: 18, height: 18)
+                Text("\(discNumber)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.75))
+            }
         }
         .buttonStyle(.plain)
     }
 }
 
 private struct DiscSlotCard: View {
+    @EnvironmentObject private var appState: AppState
+
     let slot: DiscSlot
     let isActive: Bool
     let onLoad: () -> Void
+    let onRemove: () -> Void
+    let onPasteArtwork: () -> Void
+    @State private var albumQuery = ""
+    @State private var albumSuggestions: [AlbumSuggestion] = []
+    @State private var isSearching = false
+    @State private var searchWorkItem: DispatchWorkItem?
+    @State private var showSuggestions = false
+    @FocusState private var isQueryFocused: Bool
 
     var body: some View {
         VStack(spacing: 12) {
@@ -248,19 +259,76 @@ private struct DiscSlotCard: View {
                 }
             }
             .frame(height: 160)
-
-            Text("Disc \(slot.slotIndex)")
-                .font(.headline)
-                .foregroundStyle(Color.white.opacity(0.9))
-
-            Button("Load from Music") {
-                onLoad()
+            .contextMenu {
+                Button("Paste Artwork") {
+                    onPasteArtwork()
+                }
             }
-            .disabled(isActive)
 
-            if slot.isLoaded {
-                DiscDetailView(slot: slot)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Text("Disc \(slot.slotIndex)")
+                        .font(.headline)
+                        .foregroundStyle(Color.white.opacity(0.9))
+
+                    Button(slot.isLoaded ? "Remove Disc" : "Load from Music") {
+                        if slot.isLoaded {
+                            onRemove()
+                        } else {
+                            onLoad()
+                        }
+                    }
+                    .disabled(isActive)
+                }
+
+                if !slot.isLoaded {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Load by album")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.6))
+                        TextField("Start typing an album name", text: $albumQuery)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(isActive)
+                            .focused($isQueryFocused)
+                            .onChange(of: albumQuery) { newValue in
+                                scheduleSearch(for: newValue)
+                            }
+                            .onChange(of: isQueryFocused) { focused in
+                                if !focused {
+                                    showSuggestions = false
+                                }
+                            }
+                            .popover(isPresented: $showSuggestions, arrowEdge: .bottom) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(albumSuggestions.prefix(6))) { album in
+                                        Button {
+                                            select(album)
+                                        } label: {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(album.albumTitle)
+                                                    .font(.callout.weight(.semibold))
+                                                    .foregroundStyle(Color.primary)
+                                                Text(album.subtitle)
+                                                    .font(.caption)
+                                                    .foregroundStyle(Color.secondary)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.vertical, 4)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(12)
+                                .frame(minWidth: 240, maxWidth: 320)
+                            }
+                        if isSearching {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+                }
             }
+
         }
         .padding(16)
         .background(
@@ -268,26 +336,37 @@ private struct DiscSlotCard: View {
                 .strokeBorder(isActive ? Color(red: 0.7, green: 0.8, blue: 0.95) : Color.white.opacity(0.15), lineWidth: 1)
         )
     }
-}
 
-private struct DiscDetailView: View {
-    let slot: DiscSlot
-
-    var body: some View {
-        VStack(spacing: 4) {
-            if let albumTitle = slot.albumTitle {
-                Text(albumTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.7))
-                    .lineLimit(1)
-            }
-            if let artistName = slot.artistName {
-                Text(artistName)
-                    .font(.caption2)
-                    .foregroundStyle(Color.white.opacity(0.6))
-                    .lineLimit(1)
+    private func scheduleSearch(for query: String) {
+        searchWorkItem?.cancel()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            albumSuggestions = []
+            isSearching = false
+            showSuggestions = false
+            return
+        }
+        let workItem = DispatchWorkItem {
+            isSearching = true
+            appState.searchAlbums(matching: trimmed) { results in
+                if albumQuery.trimmingCharacters(in: .whitespacesAndNewlines) != trimmed {
+                    return
+                }
+                albumSuggestions = results
+                isSearching = false
+                showSuggestions = isQueryFocused && !results.isEmpty
             }
         }
+        searchWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func select(_ album: AlbumSuggestion) {
+        albumQuery = ""
+        albumSuggestions = []
+        isSearching = false
+        showSuggestions = false
+        appState.loadAlbum(slotIndex: slot.slotIndex, album: album)
     }
 }
 

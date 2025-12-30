@@ -20,6 +20,8 @@ struct CDC_2010RApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .frame(width: 900, height: 640)
         }
+        .windowResizability(.contentSize)
     }
 }

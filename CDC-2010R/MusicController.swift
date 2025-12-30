@@ -17,6 +17,16 @@ struct LoadedDisc {
     let artistName: String?
     let artworkData: Data?
     let trackIDs: [String]
+    let trackNumbersByID: [String: Int]
+}
+
+struct CurrentPlaybackInfo {
+    let trackPersistentID: String?
+    let trackNumber: Int?
+    let playerPosition: TimeInterval?
+    let albumTitle: String?
+    let artistName: String?
+    let playlistPersistentID: String?
 }
 
 enum MusicControllerError: LocalizedError {
@@ -67,6 +77,103 @@ final class MusicController {
         }
     }
 
+    func searchAlbums(matching query: String, limit: Int = 12) -> Result<[AlbumSuggestion], MusicControllerError> {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .success([]) }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let cappedLimit = max(1, min(limit, 25))
+        let safeQuery = appleScriptStringLiteral(trimmed)
+        let script = """
+        tell application id "com.apple.Music"
+            set queryText to "\(safeQuery)"
+            set limitCount to \(cappedLimit)
+            set matches to (every track of library playlist 1 whose album contains queryText)
+            set results to {}
+            set seenKeys to {}
+            repeat with tr in matches
+                set albumName to album of tr
+                if albumName is missing value then set albumName to ""
+                set artistName to ""
+                try
+                    set artistName to artist of tr
+                end try
+                set albumKey to albumName & "||" & artistName
+                if albumName is not "" then
+                    if albumKey is not in seenKeys then
+                        set end of seenKeys to albumKey
+                        set end of results to {albumName as text, artistName as text}
+                    end if
+                end if
+                if (count of results) >= limitCount then exit repeat
+            end repeat
+            return {"ALBUMS", results}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            guard descriptor.numberOfItems >= 2 else {
+                return .failure(.scriptFailed("Unexpected album search result."))
+            }
+            let listDescriptor = descriptor.atIndex(2)
+            let suggestions = parseAlbumSuggestions(from: listDescriptor)
+            return .success(suggestions)
+        }
+    }
+
+    func loadAlbum(albumTitle: String, artistName: String?) -> Result<LoadedDisc, MusicControllerError> {
+        let trimmedAlbum = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAlbum.isEmpty else {
+            return .failure(.noAlbumFound)
+        }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let safeAlbum = appleScriptStringLiteral(trimmedAlbum)
+        let safeArtist = appleScriptStringLiteral(artistName ?? "")
+        let script = """
+        tell application id "com.apple.Music"
+            set targetAlbum to "\(safeAlbum)"
+            set targetArtist to "\(safeArtist)"
+            if targetArtist is "" then
+                set albumTracks to (every track of library playlist 1 whose album is targetAlbum)
+            else
+                set albumTracks to (every track of library playlist 1 whose album is targetAlbum and artist is targetArtist)
+            end if
+            if (count of albumTracks) is 0 then return {"ERROR","NO_ALBUM"}
+            set trackInfoList to {}
+            repeat with tr in albumTracks
+                set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
+            end repeat
+            set artData to ""
+            set resolvedArtist to targetArtist
+            try
+                set t to item 1 of albumTracks
+                if resolvedArtist is "" then
+                    try
+                        set resolvedArtist to artist of t
+                    end try
+                end if
+                if (count of artworks of t) > 0 then
+                    try
+                        set artData to (raw data of artwork 1 of t)
+                    on error
+                        try
+                            set artData to (data of artwork 1 of t)
+                        end try
+                    end try
+                end if
+            end try
+            return {"ALBUM", targetAlbum, resolvedArtist, artData, trackInfoList}
+        end tell
+        """
+        return parseAlbumResult(run(script: script))
+    }
+
     func diagnostics() -> String {
         let musicRunning = isMusicRunning()
         let entitlement = hasAppleEventsEntitlement()
@@ -98,6 +205,52 @@ final class MusicController {
                 return .failure(.scriptFailed("Missing track identifier."))
             }
             return .success(persistentID)
+        }
+    }
+
+    func currentPlaybackInfo() -> Result<CurrentPlaybackInfo, MusicControllerError> {
+        let script = """
+        tell application id "com.apple.Music"
+            set t to current track
+            if t is missing value then return {"ERROR","NO_CURRENT_TRACK"}
+            set trackID to persistent ID of t as text
+            set trackNumberValue to track number of t
+            set positionValue to player position
+            set albumName to album of t
+            set artistName to artist of t
+            set playlistID to ""
+            try
+                set pl to current playlist
+                if pl is not missing value then set playlistID to persistent ID of pl as text
+            end try
+            return {"NOW", trackID, trackNumberValue, positionValue, albumName, artistName, playlistID}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            if isErrorDescriptor(descriptor, code: "NO_CURRENT_TRACK") {
+                return .failure(.noCurrentTrack)
+            }
+            guard descriptor.numberOfItems >= 7 else {
+                return .failure(.scriptFailed("Unexpected playback info result."))
+            }
+            let trackID = descriptor.atIndex(2)?.stringValue ?? ""
+            let trackNumber = descriptor.atIndex(3)?.int32Value ?? 0
+            let position = descriptor.atIndex(4)?.doubleValue ?? 0
+            let albumName = descriptor.atIndex(5)?.stringValue
+            let artistName = descriptor.atIndex(6)?.stringValue
+            let playlistID = descriptor.atIndex(7)?.stringValue
+            return .success(CurrentPlaybackInfo(
+                trackPersistentID: trackID.isEmpty ? nil : trackID,
+                trackNumber: trackNumber > 0 ? Int(trackNumber) : nil,
+                playerPosition: position > 0 ? position : nil,
+                albumTitle: albumName?.isEmpty == false ? albumName : nil,
+                artistName: artistName?.isEmpty == false ? artistName : nil,
+                playlistPersistentID: playlistID?.isEmpty == false ? playlistID : nil
+            ))
         }
     }
 
@@ -369,6 +522,9 @@ final class MusicController {
                 }
                 return $0.discNumber < $1.discNumber
             }.map { $0.persistentID }
+            let trackNumbersByID = Dictionary(uniqueKeysWithValues: trackInfos.compactMap { info in
+                info.trackNumber > 0 ? (info.persistentID, info.trackNumber) : nil
+            })
             let identifier = "album:\(artistName)|\(albumName)"
             return .success(LoadedDisc(
                 sourceType: "album",
@@ -376,7 +532,8 @@ final class MusicController {
                 albumTitle: albumName,
                 artistName: artistName,
                 artworkData: artData,
-                trackIDs: trackIDs
+                trackIDs: trackIDs,
+                trackNumbersByID: trackNumbersByID
             ))
         }
     }
@@ -405,13 +562,17 @@ final class MusicController {
                 }
                 return $0.discNumber < $1.discNumber
             }.map { $0.persistentID }
+            let trackNumbersByID = Dictionary(uniqueKeysWithValues: trackInfos.compactMap { info in
+                info.trackNumber > 0 ? (info.persistentID, info.trackNumber) : nil
+            })
             return .success(LoadedDisc(
                 sourceType: "playlist",
                 sourceIdentifier: playlistID,
                 albumTitle: albumName?.isEmpty == false ? albumName : playlistName,
                 artistName: artistName?.isEmpty == false ? artistName : nil,
                 artworkData: artData,
-                trackIDs: trackIDs
+                trackIDs: trackIDs,
+                trackNumbersByID: trackNumbersByID
             ))
         }
     }
@@ -441,6 +602,24 @@ final class MusicController {
             }
         }
         return infos
+    }
+
+    private func parseAlbumSuggestions(from descriptor: NSAppleEventDescriptor?) -> [AlbumSuggestion] {
+        guard let descriptor else { return [] }
+        var suggestions: [AlbumSuggestion] = []
+        var seenKeys = Set<String>()
+        for index in 1...descriptor.numberOfItems {
+            guard let item = descriptor.atIndex(index), item.numberOfItems >= 1 else { continue }
+            let albumName = item.atIndex(1)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let artistName = item.atIndex(2)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !albumName.isEmpty else { continue }
+            let key = "\(albumName.lowercased())|\(artistName?.lowercased() ?? "")"
+            if seenKeys.insert(key).inserted {
+                let artistValue = artistName?.isEmpty == false ? artistName : nil
+                suggestions.append(AlbumSuggestion(albumTitle: albumName, artistName: artistValue))
+            }
+        }
+        return suggestions
     }
 
     private func appleScriptStringLiteral(_ value: String) -> String {
