@@ -245,8 +245,8 @@ private struct DiscSlotCard: View {
     let onLoad: () -> Void
     let onRemove: () -> Void
     let onPasteArtwork: () -> Void
-    @State private var albumQuery = ""
-    @State private var albumSuggestions: [AlbumSuggestion] = []
+    @State private var searchQuery = ""
+    @State private var librarySuggestions: [MusicSuggestion] = []
     @State private var isSearching = false
     @State private var searchWorkItem: DispatchWorkItem?
     @State private var showSuggestions = false
@@ -293,14 +293,14 @@ private struct DiscSlotCard: View {
 
                 if !slot.isLoaded {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Load by album")
+                        Text("Load by album or playlist")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.6))
-                        TextField("Start typing an album name", text: $albumQuery)
+                        TextField("Start typing an album or playlist", text: $searchQuery)
                             .textFieldStyle(.roundedBorder)
                             .disabled(isActive)
                             .focused($isQueryFocused)
-                            .onChange(of: albumQuery) { newValue in
+                            .onChange(of: searchQuery) { newValue in
                                 scheduleSearch(for: newValue)
                             }
                             .onChange(of: isQueryFocused) { focused in
@@ -310,17 +310,29 @@ private struct DiscSlotCard: View {
                             }
                             .popover(isPresented: $showSuggestions, arrowEdge: .bottom) {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(Array(albumSuggestions.prefix(6))) { album in
+                                    ForEach(Array(librarySuggestions.prefix(8))) { suggestion in
                                         Button {
-                                            select(album)
+                                            select(suggestion)
                                         } label: {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(album.albumTitle)
-                                                    .font(.callout.weight(.semibold))
-                                                    .foregroundStyle(Color.primary)
-                                                Text(album.subtitle)
-                                                    .font(.caption)
+                                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(suggestion.title)
+                                                        .font(.callout.weight(.semibold))
+                                                        .foregroundStyle(Color.primary)
+                                                    Text(suggestion.subtitle)
+                                                        .font(.caption)
+                                                        .foregroundStyle(Color.secondary)
+                                                }
+                                                Spacer(minLength: 8)
+                                                Text(suggestion.kind.label)
+                                                    .font(.caption2.weight(.semibold))
                                                     .foregroundStyle(Color.secondary)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(
+                                                        Capsule()
+                                                            .fill(Color.secondary.opacity(0.15))
+                                                    )
                                             }
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .padding(.vertical, 4)
@@ -351,18 +363,18 @@ private struct DiscSlotCard: View {
         searchWorkItem?.cancel()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
-            albumSuggestions = []
+            librarySuggestions = []
             isSearching = false
             showSuggestions = false
             return
         }
         let workItem = DispatchWorkItem {
             isSearching = true
-            appState.searchAlbums(matching: trimmed) { results in
-                if albumQuery.trimmingCharacters(in: .whitespacesAndNewlines) != trimmed {
+            appState.searchLibrary(matching: trimmed) { results in
+                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) != trimmed {
                     return
                 }
-                albumSuggestions = results
+                librarySuggestions = results
                 isSearching = false
                 showSuggestions = isQueryFocused && !results.isEmpty
             }
@@ -371,12 +383,19 @@ private struct DiscSlotCard: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
-    private func select(_ album: AlbumSuggestion) {
-        albumQuery = ""
-        albumSuggestions = []
+    private func select(_ suggestion: MusicSuggestion) {
+        searchQuery = ""
+        librarySuggestions = []
         isSearching = false
         showSuggestions = false
-        appState.loadAlbum(slotIndex: slot.slotIndex, album: album)
+        switch suggestion.kind {
+        case .album:
+            appState.loadAlbum(slotIndex: slot.slotIndex, album: suggestion)
+        case .playlist:
+            if let playlistID = suggestion.playlistPersistentID {
+                appState.loadPlaylist(slotIndex: slot.slotIndex, playlistID: playlistID, playlistName: suggestion.title)
+            }
+        }
     }
 }
 

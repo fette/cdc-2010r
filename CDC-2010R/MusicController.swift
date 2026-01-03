@@ -77,7 +77,7 @@ final class MusicController {
         }
     }
 
-    func searchAlbums(matching query: String, limit: Int = 12) -> Result<[AlbumSuggestion], MusicControllerError> {
+    func searchAlbums(matching query: String, limit: Int = 10) -> Result<[MusicSuggestion], MusicControllerError> {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .success([]) }
         guard ensureMusicRunning() else {
@@ -121,6 +121,46 @@ final class MusicController {
             }
             let listDescriptor = descriptor.atIndex(2)
             let suggestions = parseAlbumSuggestions(from: listDescriptor)
+            return .success(suggestions)
+        }
+    }
+
+    func searchPlaylists(matching query: String, limit: Int = 6) -> Result<[MusicSuggestion], MusicControllerError> {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .success([]) }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let cappedLimit = max(1, min(limit, 25))
+        let safeQuery = appleScriptStringLiteral(trimmed)
+        let script = """
+        tell application id "com.apple.Music"
+            set queryText to "\(safeQuery)"
+            set limitCount to \(cappedLimit)
+            set results to {}
+            repeat with pl in user playlists
+                set plName to name of pl as text
+                if plName contains queryText then
+                    set pid to persistent ID of pl as text
+                    if pid is not "" then
+                        set end of results to {plName, pid}
+                    end if
+                end if
+                if (count of results) >= limitCount then exit repeat
+            end repeat
+            return {"PLAYLISTS", results}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            guard descriptor.numberOfItems >= 2 else {
+                return .failure(.scriptFailed("Unexpected playlist search result."))
+            }
+            let listDescriptor = descriptor.atIndex(2)
+            let suggestions = parsePlaylistSuggestions(from: listDescriptor)
             return .success(suggestions)
         }
     }
@@ -185,6 +225,61 @@ final class MusicController {
         end tell
         """
         return parseAlbumResult(run(script: script))
+    }
+
+    func loadPlaylist(persistentID: String) -> Result<LoadedDisc, MusicControllerError> {
+        let trimmedID = persistentID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty else {
+            return .failure(.noPlaylistFound)
+        }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let safeID = appleScriptStringLiteral(trimmedID)
+        let script = """
+        tell application id "com.apple.Music"
+            set pid to "\(safeID)"
+            set pl to (some playlist whose persistent ID is pid)
+            if pl is missing value then return {"ERROR","NO_PLAYLIST"}
+            set plName to name of pl as text
+            set trackInfoList to {}
+            repeat with tr in tracks of pl
+                set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
+            end repeat
+            set artData to ""
+            set albumName to ""
+            set artistName to ""
+            if (count of tracks of pl) > 0 then
+                set t to item 1 of tracks of pl
+                set bestSize to 0
+                try
+                    repeat with aw in artworks of t
+                        set candidate to ""
+                        try
+                            set candidate to (raw data of aw)
+                        on error
+                            try
+                                set candidate to (data of aw)
+                            end try
+                        end try
+                        if candidate is not "" then
+                            try
+                                set candidateSize to length of candidate
+                                if candidateSize > bestSize then
+                                    set bestSize to candidateSize
+                                    set artData to candidate
+                                end if
+                            end try
+                        end if
+                    end repeat
+                end try
+                set albumName to album of t
+                set artistName to artist of t
+            end if
+            return {"PLAYLIST", pid, plName, artData, trackInfoList, albumName, artistName}
+        end tell
+        """
+        return parsePlaylistResult(run(script: script))
     }
 
     func diagnostics() -> String {
@@ -679,9 +774,10 @@ final class MusicController {
         return infos
     }
 
-    private func parseAlbumSuggestions(from descriptor: NSAppleEventDescriptor?) -> [AlbumSuggestion] {
+    private func parseAlbumSuggestions(from descriptor: NSAppleEventDescriptor?) -> [MusicSuggestion] {
         guard let descriptor else { return [] }
-        var suggestions: [AlbumSuggestion] = []
+        guard descriptor.numberOfItems > 0 else { return [] }
+        var suggestions: [MusicSuggestion] = []
         var seenKeys = Set<String>()
         for index in 1...descriptor.numberOfItems {
             guard let item = descriptor.atIndex(index), item.numberOfItems >= 1 else { continue }
@@ -691,8 +787,36 @@ final class MusicController {
             let key = "\(albumName.lowercased())|\(artistName?.lowercased() ?? "")"
             if seenKeys.insert(key).inserted {
                 let artistValue = artistName?.isEmpty == false ? artistName : nil
-                suggestions.append(AlbumSuggestion(albumTitle: albumName, artistName: artistValue))
+                suggestions.append(MusicSuggestion(
+                    kind: .album,
+                    title: albumName,
+                    subtitle: artistValue ?? "Unknown Artist",
+                    albumTitle: albumName,
+                    artistName: artistValue,
+                    playlistPersistentID: nil
+                ))
             }
+        }
+        return suggestions
+    }
+
+    private func parsePlaylistSuggestions(from descriptor: NSAppleEventDescriptor?) -> [MusicSuggestion] {
+        guard let descriptor else { return [] }
+        guard descriptor.numberOfItems > 0 else { return [] }
+        var suggestions: [MusicSuggestion] = []
+        for index in 1...descriptor.numberOfItems {
+            guard let item = descriptor.atIndex(index), item.numberOfItems >= 2 else { continue }
+            let name = item.atIndex(1)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let pid = item.atIndex(2)?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty, !pid.isEmpty else { continue }
+            suggestions.append(MusicSuggestion(
+                kind: .playlist,
+                title: name,
+                subtitle: "Playlist",
+                albumTitle: nil,
+                artistName: nil,
+                playlistPersistentID: pid
+            ))
         }
         return suggestions
     }

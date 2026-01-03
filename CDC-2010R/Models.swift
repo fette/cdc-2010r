@@ -45,17 +45,36 @@ struct DiscSlot: Codable, Identifiable, Equatable {
     }
 }
 
-struct AlbumSuggestion: Identifiable, Hashable {
-    let albumTitle: String
+enum MusicSuggestionKind: String, Hashable {
+    case album
+    case playlist
+
+    var label: String {
+        switch self {
+        case .album:
+            return "Album"
+        case .playlist:
+            return "Playlist"
+        }
+    }
+}
+
+struct MusicSuggestion: Identifiable, Hashable {
+    let kind: MusicSuggestionKind
+    let title: String
+    let subtitle: String
+    let albumTitle: String?
     let artistName: String?
+    let playlistPersistentID: String?
 
     var id: String {
-        let artist = artistName?.lowercased() ?? ""
-        return "\(albumTitle.lowercased())|\(artist)"
-    }
-
-    var subtitle: String {
-        artistName?.isEmpty == false ? artistName! : "Unknown Artist"
+        switch kind {
+        case .album:
+            let artist = artistName?.lowercased() ?? ""
+            return "album|\(title.lowercased())|\(artist)"
+        case .playlist:
+            return "playlist|\(playlistPersistentID ?? title.lowercased())"
+        }
     }
 }
 

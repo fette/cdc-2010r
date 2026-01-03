@@ -79,11 +79,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    func loadAlbum(slotIndex: Int, album: AlbumSuggestion) {
-        statusMessage = "Loading \(album.albumTitle)..."
+    func loadAlbum(slotIndex: Int, album: MusicSuggestion) {
+        statusMessage = "Loading \(album.title)..."
         _ = MusicController.shared.requestAutomationPermission()
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = MusicController.shared.loadAlbum(albumTitle: album.albumTitle, artistName: album.artistName)
+            let result = MusicController.shared.loadAlbum(albumTitle: album.title, artistName: album.artistName)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 switch result {
@@ -103,7 +103,31 @@ final class AppState: ObservableObject {
         }
     }
 
-    func searchAlbums(matching query: String, completion: @escaping ([AlbumSuggestion]) -> Void) {
+    func loadPlaylist(slotIndex: Int, playlistID: String, playlistName: String) {
+        statusMessage = "Loading \(playlistName)..."
+        _ = MusicController.shared.requestAutomationPermission()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.loadPlaylist(persistentID: playlistID)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let loaded):
+                    self.updateSlot(slotIndex: slotIndex, with: loaded)
+                    self.statusMessage = "Loaded Disc \(slotIndex)."
+                case .failure(let error):
+                    #if DEBUG
+                    self.statusMessage = [error.errorDescription, MusicController.shared.diagnostics()]
+                        .compactMap { $0 }
+                        .joined(separator: " ")
+                    #else
+                    self.statusMessage = error.errorDescription
+                    #endif
+                }
+            }
+        }
+    }
+
+    func searchLibrary(matching query: String, completion: @escaping ([MusicSuggestion]) -> Void) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
             completion([])
@@ -111,15 +135,23 @@ final class AppState: ObservableObject {
         }
         _ = MusicController.shared.requestAutomationPermission()
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = MusicController.shared.searchAlbums(matching: trimmed, limit: 12)
+            let albumResult = MusicController.shared.searchAlbums(matching: trimmed, limit: 8)
+            let playlistResult = MusicController.shared.searchPlaylists(matching: trimmed, limit: 6)
             DispatchQueue.main.async { [weak self] in
-                switch result {
-                case .success(let suggestions):
-                    completion(suggestions)
+                var suggestions: [MusicSuggestion] = []
+                switch playlistResult {
+                case .success(let playlists):
+                    suggestions.append(contentsOf: playlists)
                 case .failure(let error):
                     self?.statusMessage = error.errorDescription
-                    completion([])
                 }
+                switch albumResult {
+                case .success(let albums):
+                    suggestions.append(contentsOf: albums)
+                case .failure(let error):
+                    self?.statusMessage = error.errorDescription
+                }
+                completion(suggestions)
             }
         }
     }
