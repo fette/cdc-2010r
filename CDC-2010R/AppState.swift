@@ -173,6 +173,27 @@ final class AppState: ObservableObject {
         }
     }
 
+    func playAllDiscsShuffled() {
+        let allTrackIDs = discSlots.compactMap { $0.trackIDs }.flatMap { $0 }
+        guard !allTrackIDs.isEmpty else {
+            statusMessage = "Load discs before shuffling."
+            return
+        }
+        statusMessage = "Shuffling all discs..."
+        let shuffled = allTrackIDs.shuffled()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MusicController.shared.playTrackList(
+                trackIDs: shuffled,
+                playlistName: "CDC-2010R All-Disc Shuffle"
+            )
+            DispatchQueue.main.async { [weak self] in
+                if case .failure(let error) = result {
+                    self?.statusMessage = error.errorDescription
+                }
+            }
+        }
+    }
+
     func playPause() {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.playPause()

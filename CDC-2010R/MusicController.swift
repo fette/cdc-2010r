@@ -373,6 +373,42 @@ final class MusicController {
         }
     }
 
+    func playTrackList(trackIDs: [String], playlistName: String) -> Result<Void, MusicControllerError> {
+        guard !trackIDs.isEmpty else {
+            return .failure(.scriptFailed("Playlist has no tracks."))
+        }
+        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let script = """
+        tell application id "com.apple.Music"
+            set plName to "\(appleScriptStringLiteral(playlistName))"
+            if not (exists user playlist plName) then
+                make new user playlist with properties {name:plName}
+            end if
+            set pl to user playlist plName
+            set existingTracks to tracks of pl
+            repeat with tr in existingTracks
+                delete tr
+            end repeat
+            set idList to {\(escapedIDs)}
+            repeat with tid in idList
+                set matches to (every track of library playlist 1 whose persistent ID is tid)
+                if (count of matches) > 0 then
+                    duplicate item 1 of matches to pl
+                end if
+            end repeat
+            play pl
+            return {"OK"}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success:
+            return .success(())
+        }
+    }
+
     func playPause() -> Result<Void, MusicControllerError> {
         let script = """
         tell application id "com.apple.Music"

@@ -107,6 +107,14 @@ private struct ClosedLidView: View {
                             Image(systemName: "forward.fill")
                                 .font(.title2)
                         }
+
+                        Button {
+                            appState.playAllDiscsShuffled()
+                        } label: {
+                            Image(systemName: "shuffle")
+                                .font(.title2)
+                        }
+                        .disabled(!hasLoadedDiscs)
                     }
 
                     if let status = appState.statusMessage {
@@ -138,6 +146,10 @@ private struct ClosedLidView: View {
 
     private var displayedSlot: DiscSlot? {
         appState.discSlots.first { $0.slotIndex == displayedDiscIndex }
+    }
+
+    private var hasLoadedDiscs: Bool {
+        appState.discSlots.contains { ($0.trackIDs?.isEmpty == false) }
     }
 }
 
@@ -250,11 +262,7 @@ private struct DiscSlotCard: View {
                         endPoint: .bottomTrailing
                     ))
                 ArtworkView(base64: slot.artworkPNGBase64)
-                if isActive {
-                    Image(systemName: "lock.fill")
-                        .font(.title2)
-                        .foregroundStyle(Color.white.opacity(0.7))
-                } else if !slot.isLoaded {
+                if !slot.isLoaded {
                     Text("Empty")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.7))
