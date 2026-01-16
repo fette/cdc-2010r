@@ -21,6 +21,7 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let stateURL: URL
     private var nowPlayingTimer: AnyCancellable?
+    private var lastPlaybackTrackKey: String?
 
     init(ledFontName: String = "16SegmentsBasic") {
         self.ledFontName = ledFontName
@@ -198,6 +199,7 @@ final class AppState: ObservableObject {
                 switch result {
                 case .success:
                     self.playback.activeDiscIndex = slotIndex
+                    self.refreshArtworkIfNeeded(slotIndex: slotIndex)
                 case .failure(let error):
                     self.statusMessage = error.errorDescription
                 }
@@ -340,10 +342,18 @@ final class AppState: ObservableObject {
                         in: match
                     )
                     self.nowPlayingElapsedSeconds = info.playerPosition
+                    let trackKey = self.currentTrackKey(from: info, in: match)
+                    if trackKey != self.lastPlaybackTrackKey {
+                        if let slotIndex = self.nowPlayingDiscIndex {
+                            self.refreshArtworkIfNeeded(slotIndex: slotIndex)
+                        }
+                        self.lastPlaybackTrackKey = trackKey
+                    }
                 case .failure:
                     self.nowPlayingDiscIndex = nil
                     self.nowPlayingTrackNumber = nil
                     self.nowPlayingElapsedSeconds = nil
+                    self.lastPlaybackTrackKey = nil
                 }
             }
         }
@@ -379,6 +389,38 @@ final class AppState: ObservableObject {
         return nil
     }
 
+    private func refreshArtworkIfNeeded(slotIndex: Int) {
+        guard let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) else {
+            return
+        }
+        guard slot.artworkPNGBase64 == nil else {
+            return
+        }
+        guard let trackIDs = slot.trackIDs, !trackIDs.isEmpty else {
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            let result = MusicController.shared.fetchArtwork(trackIDs: trackIDs)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard case .success(let data) = result,
+                      let data,
+                      !data.isEmpty else {
+                    return
+                }
+                guard let slotPosition = self.discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else {
+                    return
+                }
+                var updatedSlot = self.discSlots[slotPosition]
+                guard updatedSlot.artworkPNGBase64 == nil else {
+                    return
+                }
+                updatedSlot.artworkPNGBase64 = data.base64EncodedString()
+                self.discSlots[slotPosition] = updatedSlot
+            }
+        }
+    }
+
     private func resolvedTrackNumber(
         from info: CurrentPlaybackInfo,
         in slot: DiscSlot?
@@ -405,6 +447,16 @@ final class AppState: ObservableObject {
             return nil
         }
         return trimmed.lowercased()
+    }
+
+    private func currentTrackKey(from info: CurrentPlaybackInfo, in slot: DiscSlot?) -> String? {
+        if let persistentID = info.trackPersistentID, !persistentID.isEmpty {
+            return "id:\(persistentID)"
+        }
+        guard let slot, let trackNumber = resolvedTrackNumber(from: info, in: slot) else {
+            return nil
+        }
+        return "slot:\(slot.slotIndex)|track:\(trackNumber)"
     }
 
     private static func defaultStateURL() -> URL {

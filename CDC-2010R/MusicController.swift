@@ -190,36 +190,37 @@ final class MusicController {
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
+            set bestSize to 0
             set resolvedArtist to targetArtist
             try
-                set t to item 1 of albumTracks
-                if resolvedArtist is "" then
-                    try
-                        set resolvedArtist to artist of t
-                    end try
-                end if
-                set bestSize to 0
-                try
-                    repeat with aw in artworks of t
-                        set candidate to ""
+                repeat with tr in albumTracks
+                    if resolvedArtist is "" then
                         try
-                            set candidate to (raw data of aw)
-                        on error
-                            try
-                                set candidate to (data of aw)
-                            end try
+                            set resolvedArtist to artist of tr
                         end try
-                        if candidate is not "" then
+                    end if
+                    try
+                        repeat with aw in artworks of tr
+                            set candidate to ""
                             try
-                                set candidateSize to length of candidate
-                                if candidateSize > bestSize then
-                                    set bestSize to candidateSize
-                                    set artData to candidate
-                                end if
+                                set candidate to (raw data of aw)
+                            on error
+                                try
+                                    set candidate to (data of aw)
+                                end try
                             end try
-                        end if
-                    end repeat
-                end try
+                            if candidate is not "" then
+                                try
+                                    set candidateSize to length of candidate
+                                    if candidateSize > bestSize then
+                                        set bestSize to candidateSize
+                                        set artData to candidate
+                                    end if
+                                end try
+                            end if
+                        end repeat
+                    end try
+                end repeat
             end try
             return {"ALBUM", targetAlbum, resolvedArtist, artData, trackInfoList}
         end tell
@@ -247,13 +248,22 @@ final class MusicController {
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
+            set bestSize to 0
             set albumName to ""
             set artistName to ""
-            if (count of tracks of pl) > 0 then
-                set t to item 1 of tracks of pl
-                set bestSize to 0
+            repeat with tr in tracks of pl
+                if albumName is "" then
+                    try
+                        set albumName to album of tr
+                    end try
+                end if
+                if artistName is "" then
+                    try
+                        set artistName to artist of tr
+                    end try
+                end if
                 try
-                    repeat with aw in artworks of t
+                    repeat with aw in artworks of tr
                         set candidate to ""
                         try
                             set candidate to (raw data of aw)
@@ -273,9 +283,7 @@ final class MusicController {
                         end if
                     end repeat
                 end try
-                set albumName to album of t
-                set artistName to artist of t
-            end if
+            end repeat
             return {"PLAYLIST", pid, plName, artData, trackInfoList, albumName, artistName}
         end tell
         """
@@ -468,6 +476,65 @@ final class MusicController {
         }
     }
 
+    func fetchArtwork(trackIDs: [String]) -> Result<Data?, MusicControllerError> {
+        guard !trackIDs.isEmpty else {
+            return .success(nil)
+        }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let script = """
+        tell application id "com.apple.Music"
+            set idList to {\(escapedIDs)}
+            set artData to ""
+            set bestSize to 0
+            repeat with tid in idList
+                set matches to (every track of library playlist 1 whose persistent ID is tid)
+                if (count of matches) > 0 then
+                    set tr to item 1 of matches
+                    try
+                        repeat with aw in artworks of tr
+                            set candidate to ""
+                            try
+                                set candidate to (raw data of aw)
+                            on error
+                                try
+                                    set candidate to (data of aw)
+                                end try
+                            end try
+                            if candidate is not "" then
+                                try
+                                    set candidateSize to length of candidate
+                                    if candidateSize > bestSize then
+                                        set bestSize to candidateSize
+                                        set artData to candidate
+                                    end if
+                                end try
+                            end if
+                        end repeat
+                    end try
+                end if
+            end repeat
+            return {"OK", artData}
+        end tell
+        """
+        let result = run(script: script)
+        switch result {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let descriptor):
+            guard descriptor.numberOfItems >= 2 else {
+                return .failure(.scriptFailed("Unexpected artwork result."))
+            }
+            let artData = descriptor.atIndex(2)?.data
+            if let artData, artData.isEmpty {
+                return .success(nil)
+            }
+            return .success(artData)
+        }
+    }
+
     func playTrackList(trackIDs: [String], playlistName: String) -> Result<Void, MusicControllerError> {
         guard !trackIDs.isEmpty else {
             return .failure(.scriptFailed("Playlist has no tracks."))
@@ -571,24 +638,26 @@ final class MusicController {
             set artData to ""
             set bestSize to 0
             try
-                repeat with aw in artworks of t
-                    set candidate to ""
-                    try
-                        set candidate to (raw data of aw)
-                    on error
+                repeat with tr in albumTracks
+                    repeat with aw in artworks of tr
+                        set candidate to ""
                         try
-                            set candidate to (data of aw)
+                            set candidate to (raw data of aw)
+                        on error
+                            try
+                                set candidate to (data of aw)
+                            end try
                         end try
-                    end try
-                    if candidate is not "" then
-                        try
-                            set candidateSize to length of candidate
-                            if candidateSize > bestSize then
-                                set bestSize to candidateSize
-                                set artData to candidate
-                            end if
-                        end try
-                    end if
+                        if candidate is not "" then
+                            try
+                                set candidateSize to length of candidate
+                                if candidateSize > bestSize then
+                                    set bestSize to candidateSize
+                                    set artData to candidate
+                                end if
+                            end try
+                        end if
+                    end repeat
                 end repeat
             end try
             return {"ALBUM", albumName, artistName, artData, trackInfoList}
@@ -610,13 +679,22 @@ final class MusicController {
                 set end of trackInfoList to {persistent ID of tr as text, track number of tr, disc number of tr}
             end repeat
             set artData to ""
+            set bestSize to 0
             set albumName to ""
             set artistName to ""
-            if (count of tracks of pl) > 0 then
-                set t to item 1 of tracks of pl
-                set bestSize to 0
+            repeat with tr in tracks of pl
+                if albumName is "" then
+                    try
+                        set albumName to album of tr
+                    end try
+                end if
+                if artistName is "" then
+                    try
+                        set artistName to artist of tr
+                    end try
+                end if
                 try
-                    repeat with aw in artworks of t
+                    repeat with aw in artworks of tr
                         set candidate to ""
                         try
                             set candidate to (raw data of aw)
@@ -636,9 +714,7 @@ final class MusicController {
                         end if
                     end repeat
                 end try
-                set albumName to album of t
-                set artistName to artist of t
-            end if
+            end repeat
             return {"PLAYLIST", pid, plName, artData, trackInfoList, albumName, artistName}
         end tell
         """
