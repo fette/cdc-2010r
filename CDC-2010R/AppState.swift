@@ -22,6 +22,10 @@ final class AppState: ObservableObject {
     private let stateURL: URL
     private var nowPlayingTimer: AnyCancellable?
     private var lastPlaybackTrackKey: String?
+    private let cdcLogURL: URL = {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent("source/promptuary/cdc-log.jsonl")
+    }()
 
     init(ledFontName: String = "16SegmentsBasic") {
         self.ledFontName = ledFontName
@@ -66,6 +70,7 @@ final class AppState: ObservableObject {
                 switch result {
                 case .success(let loaded):
                     self.updateSlot(slotIndex: slotIndex, with: loaded)
+                    self.logEvent("loaded", slot: slotIndex, album: loaded.albumTitle, artist: loaded.artistName)
                     self.statusMessage = "Loaded Disc \(slotIndex)."
                 case .failure(let error):
                     #if DEBUG
@@ -90,6 +95,7 @@ final class AppState: ObservableObject {
                 switch result {
                 case .success(let loaded):
                     self.updateSlot(slotIndex: slotIndex, with: loaded)
+                    self.logEvent("loaded", slot: slotIndex, album: loaded.albumTitle, artist: loaded.artistName)
                     self.statusMessage = "Loaded Disc \(slotIndex)."
                 case .failure(let error):
                     #if DEBUG
@@ -114,6 +120,7 @@ final class AppState: ObservableObject {
                 switch result {
                 case .success(let loaded):
                     self.updateSlot(slotIndex: slotIndex, with: loaded)
+                    self.logEvent("loaded", slot: slotIndex, album: loaded.albumTitle, artist: loaded.artistName)
                     self.statusMessage = "Loaded Disc \(slotIndex)."
                 case .failure(let error):
                     #if DEBUG
@@ -161,6 +168,8 @@ final class AppState: ObservableObject {
         guard let slotPosition = discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else {
             return
         }
+        let old = discSlots[slotPosition]
+        logEvent("removed", slot: slotIndex, album: old.albumTitle, artist: old.artistName)
         discSlots[slotPosition] = DiscSlot(slotIndex: slotIndex)
         if nowPlayingDiscIndex == slotIndex {
             nowPlayingDiscIndex = nil
@@ -200,6 +209,7 @@ final class AppState: ObservableObject {
                 case .success:
                     self.playback.activeDiscIndex = slotIndex
                     self.refreshArtworkIfNeeded(slotIndex: slotIndex)
+                    self.logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName)
                 case .failure(let error):
                     self.statusMessage = error.errorDescription
                 }
@@ -258,6 +268,37 @@ final class AppState: ObservableObject {
                     self?.statusMessage = error.errorDescription
                 }
             }
+        }
+    }
+
+    private func logEvent(_ event: String, slot: Int, album: String?, artist: String?, trackName: String? = nil, trackNumber: Int? = nil) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone.current
+        var entry: [String: Any?] = [
+            "event": event,
+            "slot": slot,
+            "album": album,
+            "artist": artist,
+            "ts": formatter.string(from: Date())
+        ]
+        if let trackName {
+            entry["trackName"] = trackName
+        }
+        if let trackNumber {
+            entry["trackNumber"] = trackNumber
+        }
+        let compact = entry.compactMapValues { $0 }
+        guard let data = try? JSONSerialization.data(withJSONObject: compact, options: [.sortedKeys]),
+              var line = String(data: data, encoding: .utf8) else { return }
+        line += "\n"
+        if FileManager.default.fileExists(atPath: cdcLogURL.path) {
+            guard let handle = try? FileHandle(forWritingTo: cdcLogURL) else { return }
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            try? line.data(using: .utf8)?.write(to: cdcLogURL)
         }
     }
 
@@ -346,6 +387,14 @@ final class AppState: ObservableObject {
                     if trackKey != self.lastPlaybackTrackKey {
                         if let slotIndex = self.nowPlayingDiscIndex {
                             self.refreshArtworkIfNeeded(slotIndex: slotIndex)
+                        }
+                        if let trackKey {
+                            self.logEvent("track",
+                                slot: self.nowPlayingDiscIndex ?? 0,
+                                album: info.albumTitle,
+                                artist: info.artistName,
+                                trackName: info.trackName,
+                                trackNumber: self.nowPlayingTrackNumber)
                         }
                         self.lastPlaybackTrackKey = trackKey
                     }

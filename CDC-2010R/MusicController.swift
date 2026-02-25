@@ -26,6 +26,7 @@ struct CurrentPlaybackInfo {
     let playerPosition: TimeInterval?
     let albumTitle: String?
     let artistName: String?
+    let trackName: String?
     let playlistPersistentID: String?
 }
 
@@ -334,12 +335,13 @@ final class MusicController {
             set positionValue to player position
             set albumName to album of t
             set artistName to artist of t
+            set trackName to name of t
             set playlistID to ""
             try
                 set pl to current playlist
                 if pl is not missing value then set playlistID to persistent ID of pl as text
             end try
-            return {"NOW", trackID, trackNumberValue, positionValue, albumName, artistName, playlistID}
+            return {"NOW", trackID, trackNumberValue, positionValue, albumName, artistName, trackName, playlistID}
         end tell
         """
         let result = run(script: script)
@@ -350,7 +352,7 @@ final class MusicController {
             if isErrorDescriptor(descriptor, code: "NO_CURRENT_TRACK") {
                 return .failure(.noCurrentTrack)
             }
-            guard descriptor.numberOfItems >= 7 else {
+            guard descriptor.numberOfItems >= 8 else {
                 return .failure(.scriptFailed("Unexpected playback info result."))
             }
             let trackID = descriptor.atIndex(2)?.stringValue ?? ""
@@ -358,13 +360,15 @@ final class MusicController {
             let position = descriptor.atIndex(4)?.doubleValue ?? 0
             let albumName = descriptor.atIndex(5)?.stringValue
             let artistName = descriptor.atIndex(6)?.stringValue
-            let playlistID = descriptor.atIndex(7)?.stringValue
+            let trackName = descriptor.atIndex(7)?.stringValue
+            let playlistID = descriptor.atIndex(8)?.stringValue
             return .success(CurrentPlaybackInfo(
                 trackPersistentID: trackID.isEmpty ? nil : trackID,
                 trackNumber: trackNumber > 0 ? Int(trackNumber) : nil,
                 playerPosition: position > 0 ? position : nil,
                 albumTitle: albumName?.isEmpty == false ? albumName : nil,
                 artistName: artistName?.isEmpty == false ? artistName : nil,
+                trackName: trackName?.isEmpty == false ? trackName : nil,
                 playlistPersistentID: playlistID?.isEmpty == false ? playlistID : nil
             ))
         }
