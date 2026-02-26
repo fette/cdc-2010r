@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
@@ -155,6 +156,7 @@ private struct ClosedLidView: View {
 
 private struct OpenLidView: View {
     @EnvironmentObject private var appState: AppState
+    @FocusState private var isFocused: Bool
 
     private let columns = [
         GridItem(.flexible(), spacing: 16),
@@ -194,6 +196,13 @@ private struct OpenLidView: View {
                     .font(.callout)
                     .foregroundStyle(Color.white.opacity(0.6))
             }
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onAppear { isFocused = true }
+        .onPasteCommand(of: [.image]) { _ in
+            appState.pasteArtwork(slotIndex: appState.playback.activeDiscIndex)
         }
     }
 }
