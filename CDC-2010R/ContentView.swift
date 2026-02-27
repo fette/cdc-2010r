@@ -40,6 +40,7 @@ struct ContentView: View {
 
 private struct ClosedLidView: View {
     @EnvironmentObject private var appState: AppState
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 24) {
@@ -126,6 +127,13 @@ private struct ClosedLidView: View {
                 }
                 .frame(maxWidth: 320, alignment: .leading)
             }
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onAppear { isFocused = true }
+        .onPasteCommand(of: [.image]) { _ in
+            appState.pasteArtwork(slotIndex: displayedDiscIndex)
         }
     }
 
