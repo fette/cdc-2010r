@@ -43,6 +43,28 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         self.youtubeURL = youtubeURL
     }
 
+    var youtubeVideoID: String? {
+        guard let youtubeURL else { return nil }
+        return Self.extractYouTubeVideoID(from: youtubeURL)
+    }
+
+    static func extractYouTubeVideoID(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        if let host = url.host, host.contains("youtu.be") {
+            let id = url.pathComponents.dropFirst().first
+            return (id?.isEmpty == false) ? id : nil
+        }
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let v = components.queryItems?.first(where: { $0.name == "v" })?.value, !v.isEmpty {
+            return v
+        }
+        if url.path.contains("/embed/") {
+            let id = url.pathComponents.last
+            return (id?.isEmpty == false && id != "embed") ? id : nil
+        }
+        return nil
+    }
+
     static func emptySlots() -> [DiscSlot] {
         (1...5).map { DiscSlot(slotIndex: $0) }
     }

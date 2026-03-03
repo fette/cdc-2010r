@@ -46,8 +46,15 @@ private struct ClosedLidView: View {
         VStack(spacing: 24) {
             HStack(alignment: .top, spacing: 32) {
                 VStack(spacing: 8) {
-                    ArtworkView(base64: displayedArtwork)
-                        .frame(maxWidth: 640, maxHeight: 640)
+                    if let videoID = appState.activeYouTubeVideoID {
+                        YouTubePlayerView(videoID: videoID, appState: appState)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .frame(maxWidth: 640, maxHeight: 360)
+                            .frame(minHeight: 240)
+                    } else {
+                        ArtworkView(base64: displayedArtwork)
+                            .frame(maxWidth: 640, maxHeight: 640)
+                    }
             }
             .frame(maxWidth: 680)
 

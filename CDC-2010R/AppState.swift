@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Foundation
+import WebKit
 
 final class AppState: ObservableObject {
     @Published var discSlots: [DiscSlot]
@@ -16,12 +17,15 @@ final class AppState: ObservableObject {
     @Published var nowPlayingDiscIndex: Int?
     @Published var nowPlayingTrackNumber: Int?
     @Published var nowPlayingElapsedSeconds: TimeInterval?
+    @Published var activeYouTubeVideoID: String?
+    weak var youtubeWebView: WKWebView?
     let ledFontName: String
 
     private var cancellables = Set<AnyCancellable>()
     private let stateURL: URL
     private var nowPlayingTimer: AnyCancellable?
     private var lastPlaybackTrackKey: String?
+    private var lastYouTubeChapter: String?
     private let cdcLogURL: URL = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent("source/promptuary/cdc-log.jsonl")
@@ -234,6 +238,7 @@ final class AppState: ObservableObject {
         discSlots[slotPosition] = DiscSlot(slotIndex: slotIndex)
         if nowPlayingDiscIndex == slotIndex {
             nowPlayingDiscIndex = nil
+            activeYouTubeVideoID = nil
         }
         statusMessage = "Removed Disc \(slotIndex)."
     }
@@ -257,9 +262,12 @@ final class AppState: ObservableObject {
         guard let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) else {
             return
         }
-        if slot.sourceType == "youtube", let urlString = slot.youtubeURL, let url = URL(string: urlString) {
-            NSWorkspace.shared.open(url)
-            logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName, youtubeURL: urlString)
+        if slot.sourceType == "youtube", let videoID = slot.youtubeVideoID {
+            activeYouTubeVideoID = videoID
+            lastYouTubeChapter = nil
+            playback.activeDiscIndex = slotIndex
+            nowPlayingDiscIndex = slotIndex
+            logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName, youtubeURL: slot.youtubeURL)
             return
         }
         guard let trackIDs = slot.trackIDs, !trackIDs.isEmpty else {
@@ -267,6 +275,9 @@ final class AppState: ObservableObject {
             return
         }
         statusMessage = "Starting Disc \(slotIndex)..."
+        activeYouTubeVideoID = nil
+        lastYouTubeChapter = nil
+        youtubeWebView = nil
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.playDisc(trackIDs: trackIDs, discIndex: slotIndex)
             DispatchQueue.main.async { [weak self] in
@@ -305,6 +316,15 @@ final class AppState: ObservableObject {
     }
 
     func playPause() {
+        if activeYouTubeVideoID != nil {
+            Task { await youtubeJS("(function(){var v=document.querySelector('video');if(v){v.paused?v.play():v.pause()}})()") }
+            return
+        }
+        if let slot = discSlots.first(where: { $0.slotIndex == playback.activeDiscIndex }),
+           slot.sourceType == "youtube" {
+            playDisc(slotIndex: playback.activeDiscIndex)
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.playPause()
             DispatchQueue.main.async { [weak self] in
@@ -316,6 +336,21 @@ final class AppState: ObservableObject {
     }
 
     func nextTrack() {
+        if activeYouTubeVideoID != nil {
+            Task {
+                await youtubeJS("""
+                (function(){
+                    \(Self.chapterExtractJS)
+                    var v=document.querySelector('video');if(!v)return;
+                    var chs=window.__cdcChapters;
+                    if(!chs||!chs.length){v.currentTime=Math.min(v.currentTime+30,v.duration);return;}
+                    var t=v.currentTime;
+                    for(var i=0;i<chs.length;i++){if(chs[i].s>t+1){v.currentTime=chs[i].s;return;}}
+                })()
+                """)
+            }
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.nextTrack()
             DispatchQueue.main.async { [weak self] in
@@ -327,6 +362,22 @@ final class AppState: ObservableObject {
     }
 
     func previousTrack() {
+        if activeYouTubeVideoID != nil {
+            Task {
+                await youtubeJS("""
+                (function(){
+                    \(Self.chapterExtractJS)
+                    var v=document.querySelector('video');if(!v)return;
+                    var chs=window.__cdcChapters;
+                    if(!chs||!chs.length){v.currentTime=Math.max(v.currentTime-30,0);return;}
+                    var t=v.currentTime;
+                    for(var i=chs.length-1;i>=0;i--){if(chs[i].s<t-3){v.currentTime=chs[i].s;return;}}
+                    v.currentTime=0;
+                })()
+                """)
+            }
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.previousTrack()
             DispatchQueue.main.async { [weak self] in
@@ -427,6 +478,10 @@ final class AppState: ObservableObject {
     }
 
     private func refreshNowPlayingDisc() {
+        if activeYouTubeVideoID != nil {
+            refreshYouTubeNowPlaying()
+            return
+        }
         DispatchQueue.global(qos: .utility).async {
             let result = MusicController.shared.currentPlaybackInfo()
             DispatchQueue.main.async { [weak self] in
@@ -473,6 +528,69 @@ final class AppState: ObservableObject {
                     self.nowPlayingElapsedSeconds = nil
                     self.lastPlaybackTrackKey = nil
                 }
+            }
+        }
+    }
+
+    @discardableResult
+    private func youtubeJS(_ js: String) async -> Any? {
+        guard let webView = youtubeWebView else { return nil }
+        return try? await webView.evaluateJavaScript(js)
+    }
+
+    /// Shared JS snippet that lazily extracts YouTube chapter timestamps.
+    /// Tries ytInitialData first, then falls back to DOM scraping of the chapter list.
+    /// Only caches when chapters are actually found; retries on failure.
+    private static let chapterExtractJS = """
+    if(!window.__cdcChapters){
+        try{
+            var c=window.ytInitialData.playerOverlays.playerOverlayRenderer
+                .decoratedPlayerBarRenderer.decoratedPlayerBarRenderer.playerBar
+                .multiMarkersPlayerBarRenderer.markersMap[0].value.chapters;
+            if(c&&c.length)window.__cdcChapters=c.map(function(x){return{
+                title:x.chapterRenderer.title.simpleText,
+                s:x.chapterRenderer.timeRangeStartMillis/1000};});
+        }catch(e){}
+        if(!window.__cdcChapters){try{
+            var links=document.querySelectorAll('ytd-macro-markers-list-item-renderer a');
+            if(links.length){var r=[];links.forEach(function(a){
+                var te=a.querySelector('#time'),ti=a.querySelector('#details h4');
+                if(te&&ti){var p=te.innerText.replace(/\\./g,':').split(':').map(Number);
+                    var s=p.length===3?p[0]*3600+p[1]*60+p[2]:p[0]*60+p[1];
+                    r.push({title:ti.innerText.trim(),s:s});}
+            });if(r.length)window.__cdcChapters=r;}
+        }catch(e){}}
+    }
+    """
+
+    private func refreshYouTubeNowPlaying() {
+        Task {
+            if let seconds = await youtubeJS("document.querySelector('video')?.currentTime") as? Double {
+                nowPlayingElapsedSeconds = seconds
+            }
+            // Get current chapter index (1-based) from cached chapter list + current time
+            if let idx = await youtubeJS("""
+                (function(){
+                    \(Self.chapterExtractJS)
+                    var chs=window.__cdcChapters;if(!chs||!chs.length)return null;
+                    var v=document.querySelector('video');if(!v)return null;
+                    var t=v.currentTime,idx=0;
+                    for(var i=chs.length-1;i>=0;i--){if(chs[i].s<=t+0.5){idx=i;break;}}
+                    return idx+1;
+                })()
+                """) as? Int {
+                nowPlayingTrackNumber = idx
+            } else {
+                nowPlayingTrackNumber = nil
+            }
+            if let chapter = await youtubeJS("document.querySelector('.ytp-chapter-title-content')?.textContent?.trim()") as? String, !chapter.isEmpty {
+                if chapter != lastYouTubeChapter {
+                    let slot = discSlots.first { $0.slotIndex == playback.activeDiscIndex }
+                    logEvent("chapter", slot: playback.activeDiscIndex, album: slot?.albumTitle, artist: slot?.artistName, trackName: chapter, trackNumber: nowPlayingTrackNumber, youtubeURL: slot?.youtubeURL)
+                    lastYouTubeChapter = chapter
+                }
+            } else {
+                lastYouTubeChapter = nil
             }
         }
     }
