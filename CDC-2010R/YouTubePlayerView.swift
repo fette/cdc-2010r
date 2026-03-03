@@ -61,6 +61,13 @@ struct YouTubePlayerView: NSViewRepresentable {
     """
 
     func makeNSView(context: Context) -> InteractiveWebView {
+        // Reuse existing web view if available (survives lid open/close)
+        if let existing = appState.youtubeWebView as? InteractiveWebView {
+            context.coordinator.webView = existing
+            context.coordinator.currentVideoID = videoID
+            return existing
+        }
+
         let hideUIScript = WKUserScript(
             source: """
             var style = document.createElement('style');

@@ -18,7 +18,8 @@ final class AppState: ObservableObject {
     @Published var nowPlayingTrackNumber: Int?
     @Published var nowPlayingElapsedSeconds: TimeInterval?
     @Published var activeYouTubeVideoID: String?
-    weak var youtubeWebView: WKWebView?
+    /// Strong reference keeps the WKWebView alive across lid open/close.
+    var youtubeWebView: WKWebView?
     let ledFontName: String
 
     private var cancellables = Set<AnyCancellable>()
