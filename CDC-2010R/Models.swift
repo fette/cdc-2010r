@@ -16,9 +16,10 @@ struct DiscSlot: Codable, Identifiable, Equatable {
     var artworkPNGBase64: String?
     var trackIDs: [String]?
     var trackNumbersByID: [String: Int]?
+    var youtubeURL: String?
 
     var id: Int { slotIndex }
-    var isLoaded: Bool { playlistPersistentID != nil }
+    var isLoaded: Bool { playlistPersistentID != nil || youtubeURL != nil }
 
     init(
         slotIndex: Int,
@@ -28,7 +29,8 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         artistName: String? = nil,
         artworkPNGBase64: String? = nil,
         trackIDs: [String]? = nil,
-        trackNumbersByID: [String: Int]? = nil
+        trackNumbersByID: [String: Int]? = nil,
+        youtubeURL: String? = nil
     ) {
         self.slotIndex = slotIndex
         self.sourceType = sourceType
@@ -38,6 +40,7 @@ struct DiscSlot: Codable, Identifiable, Equatable {
         self.artworkPNGBase64 = artworkPNGBase64
         self.trackIDs = trackIDs
         self.trackNumbersByID = trackNumbersByID
+        self.youtubeURL = youtubeURL
     }
 
     static func emptySlots() -> [DiscSlot] {
@@ -48,6 +51,7 @@ struct DiscSlot: Codable, Identifiable, Equatable {
 enum MusicSuggestionKind: String, Hashable {
     case album
     case playlist
+    case youtube
 
     var label: String {
         switch self {
@@ -55,6 +59,8 @@ enum MusicSuggestionKind: String, Hashable {
             return "Album"
         case .playlist:
             return "Playlist"
+        case .youtube:
+            return "YouTube"
         }
     }
 }
@@ -66,6 +72,8 @@ struct MusicSuggestion: Identifiable, Hashable {
     let albumTitle: String?
     let artistName: String?
     let playlistPersistentID: String?
+    let youtubeURL: String?
+    let thumbnailURL: String?
 
     var id: String {
         switch kind {
@@ -74,7 +82,20 @@ struct MusicSuggestion: Identifiable, Hashable {
             return "album|\(title.lowercased())|\(artist)"
         case .playlist:
             return "playlist|\(playlistPersistentID ?? title.lowercased())"
+        case .youtube:
+            return "youtube|\(youtubeURL ?? title.lowercased())"
         }
+    }
+
+    init(kind: MusicSuggestionKind, title: String, subtitle: String, albumTitle: String? = nil, artistName: String? = nil, playlistPersistentID: String? = nil, youtubeURL: String? = nil, thumbnailURL: String? = nil) {
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.albumTitle = albumTitle
+        self.artistName = artistName
+        self.playlistPersistentID = playlistPersistentID
+        self.youtubeURL = youtubeURL
+        self.thumbnailURL = thumbnailURL
     }
 }
 

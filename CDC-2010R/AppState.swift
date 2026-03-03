@@ -164,6 +164,67 @@ final class AppState: ObservableObject {
         }
     }
 
+    func fetchYouTubeMetadata(url: String, completion: @escaping (MusicSuggestion?) -> Void) {
+        guard let encodedURL = url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let oembedURL = URL(string: "https://www.youtube.com/oembed?url=\(encodedURL)&format=json") else {
+            completion(nil)
+            return
+        }
+        URLSession.shared.dataTask(with: oembedURL) { data, _, error in
+            DispatchQueue.main.async {
+                guard let data, error == nil,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let title = json["title"] as? String,
+                      let authorName = json["author_name"] as? String else {
+                    completion(nil)
+                    return
+                }
+                let thumbnailURL = json["thumbnail_url"] as? String
+                let suggestion = MusicSuggestion(
+                    kind: .youtube,
+                    title: title,
+                    subtitle: authorName,
+                    albumTitle: title,
+                    artistName: authorName,
+                    youtubeURL: url,
+                    thumbnailURL: thumbnailURL
+                )
+                completion(suggestion)
+            }
+        }.resume()
+    }
+
+    func loadYouTube(slotIndex: Int, url: String, title: String, channelName: String, thumbnailURL: String?) {
+        guard let slotPosition = discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else {
+            return
+        }
+        statusMessage = "Loading YouTube..."
+        var slot = discSlots[slotPosition]
+        slot.sourceType = "youtube"
+        slot.albumTitle = title
+        slot.artistName = channelName
+        slot.youtubeURL = url
+        slot.playlistPersistentID = nil
+        slot.trackIDs = nil
+        slot.trackNumbersByID = nil
+        discSlots[slotPosition] = slot
+
+        if let thumbnailURL, let thumbURL = URL(string: thumbnailURL) {
+            URLSession.shared.dataTask(with: thumbURL) { [weak self] data, _, _ in
+                DispatchQueue.main.async {
+                    guard let self, let data, !data.isEmpty else { return }
+                    guard let slotPos = self.discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else { return }
+                    var updated = self.discSlots[slotPos]
+                    updated.artworkPNGBase64 = data.base64EncodedString()
+                    self.discSlots[slotPos] = updated
+                }
+            }.resume()
+        }
+
+        logEvent("loaded", slot: slotIndex, album: title, artist: channelName, youtubeURL: url)
+        statusMessage = "Loaded Disc \(slotIndex)."
+    }
+
     func removeDisc(slotIndex: Int) {
         guard let slotPosition = discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else {
             return
@@ -194,6 +255,11 @@ final class AppState: ObservableObject {
 
     func playDisc(slotIndex: Int) {
         guard let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) else {
+            return
+        }
+        if slot.sourceType == "youtube", let urlString = slot.youtubeURL, let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+            logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName, youtubeURL: urlString)
             return
         }
         guard let trackIDs = slot.trackIDs, !trackIDs.isEmpty else {
@@ -271,7 +337,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func logEvent(_ event: String, slot: Int, album: String?, artist: String?, trackName: String? = nil, trackNumber: Int? = nil) {
+    private func logEvent(_ event: String, slot: Int, album: String?, artist: String?, trackName: String? = nil, trackNumber: Int? = nil, youtubeURL: String? = nil) {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         formatter.timeZone = TimeZone.current
@@ -287,6 +353,9 @@ final class AppState: ObservableObject {
         }
         if let trackNumber {
             entry["trackNumber"] = trackNumber
+        }
+        if let youtubeURL {
+            entry["youtubeURL"] = youtubeURL
         }
         let compact = entry.compactMapValues { $0 }
         guard let data = try? JSONSerialization.data(withJSONObject: compact, options: [.sortedKeys]),

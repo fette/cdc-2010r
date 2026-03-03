@@ -310,10 +310,10 @@ private struct DiscSlotCard: View {
 
                 if !slot.isLoaded {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Load by album or playlist")
+                        Text("Load by album, playlist, or YouTube URL")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.6))
-                        TextField("Start typing an album or playlist", text: $searchQuery)
+                        TextField("Album, playlist, or YouTube URL", text: $searchQuery)
                             .textFieldStyle(.roundedBorder)
                             .disabled(isActive)
                             .focused($isQueryFocused)
@@ -385,6 +385,20 @@ private struct DiscSlotCard: View {
             showSuggestions = false
             return
         }
+        if trimmed.contains("youtube.com/") || trimmed.contains("youtu.be/") {
+            isSearching = true
+            appState.fetchYouTubeMetadata(url: trimmed) { suggestion in
+                isSearching = false
+                if let suggestion {
+                    librarySuggestions = [suggestion]
+                    showSuggestions = isQueryFocused
+                } else {
+                    librarySuggestions = []
+                    showSuggestions = false
+                }
+            }
+            return
+        }
         let workItem = DispatchWorkItem {
             isSearching = true
             appState.searchLibrary(matching: trimmed) { results in
@@ -411,6 +425,10 @@ private struct DiscSlotCard: View {
         case .playlist:
             if let playlistID = suggestion.playlistPersistentID {
                 appState.loadPlaylist(slotIndex: slot.slotIndex, playlistID: playlistID, playlistName: suggestion.title)
+            }
+        case .youtube:
+            if let url = suggestion.youtubeURL {
+                appState.loadYouTube(slotIndex: slot.slotIndex, url: url, title: suggestion.title, channelName: suggestion.artistName ?? "", thumbnailURL: suggestion.thumbnailURL)
             }
         }
     }
