@@ -15,6 +15,7 @@ struct LoadedDisc {
     let sourceIdentifier: String
     let albumTitle: String?
     let artistName: String?
+    let playlistName: String?
     let artworkData: Data?
     let trackIDs: [String]
     let trackNumbersByID: [String: Int]
@@ -781,6 +782,7 @@ final class MusicController {
                 sourceIdentifier: identifier,
                 albumTitle: albumName,
                 artistName: artistName,
+                playlistName: nil,
                 artworkData: artData,
                 trackIDs: trackIDs,
                 trackNumbersByID: trackNumbersByID
@@ -820,6 +822,7 @@ final class MusicController {
                 sourceIdentifier: playlistID,
                 albumTitle: albumName?.isEmpty == false ? albumName : playlistName,
                 artistName: artistName?.isEmpty == false ? artistName : nil,
+                playlistName: playlistName,
                 artworkData: artData,
                 trackIDs: trackIDs,
                 trackNumbersByID: trackNumbersByID

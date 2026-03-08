@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Foundation
+import MusicKit
 import WebKit
 
 final class AppState: ObservableObject {
@@ -27,6 +28,12 @@ final class AppState: ObservableObject {
     private var nowPlayingTimer: AnyCancellable?
     private var lastPlaybackTrackKey: String?
     private var lastYouTubeChapter: String?
+    private var pendingTrackInfo: (slot: Int, album: String?, artist: String?,
+                                   trackName: String?, trackNumber: Int?,
+                                   startTime: Date)?
+    private var pendingChapterInfo: (slot: Int, album: String?, artist: String?,
+                                     chapterName: String?, chapterNumber: Int?,
+                                     youtubeURL: String?, startTime: Date)?
     private let cdcLogURL: URL = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent("source/promptuary/cdc-log.jsonl")
@@ -268,7 +275,6 @@ final class AppState: ObservableObject {
             lastYouTubeChapter = nil
             playback.activeDiscIndex = slotIndex
             nowPlayingDiscIndex = slotIndex
-            logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName, youtubeURL: slot.youtubeURL)
             return
         }
         guard let trackIDs = slot.trackIDs, !trackIDs.isEmpty else {
@@ -287,7 +293,6 @@ final class AppState: ObservableObject {
                 case .success:
                     self.playback.activeDiscIndex = slotIndex
                     self.refreshArtworkIfNeeded(slotIndex: slotIndex)
-                    self.logEvent("play", slot: slotIndex, album: slot.albumTitle, artist: slot.artistName)
                 case .failure(let error):
                     self.statusMessage = error.errorDescription
                 }
@@ -470,12 +475,21 @@ final class AppState: ObservableObject {
         slot.playlistPersistentID = loaded.sourceIdentifier
         slot.albumTitle = loaded.albumTitle
         slot.artistName = loaded.artistName
+        slot.playlistName = loaded.playlistName
         if let data = loaded.artworkData, !data.isEmpty {
             slot.artworkPNGBase64 = data.base64EncodedString()
         }
         slot.trackIDs = loaded.trackIDs
         slot.trackNumbersByID = loaded.trackNumbersByID
         discSlots[slotPosition] = slot
+
+        if slot.artworkPNGBase64 == nil {
+            if loaded.sourceType == "playlist", let name = loaded.playlistName, !name.isEmpty {
+                fetchPlaylistArtworkViaMusicKit(slotIndex: slotIndex, playlistName: name)
+            } else {
+                fetchArtworkFromiTunesAPI(slotIndex: slotIndex, album: loaded.albumTitle, artist: loaded.artistName)
+            }
+        }
     }
 
     private func refreshNowPlayingDisc() {
@@ -513,17 +527,42 @@ final class AppState: ObservableObject {
                         if let slotIndex = self.nowPlayingDiscIndex {
                             self.refreshArtworkIfNeeded(slotIndex: slotIndex)
                         }
-                        if let trackKey {
+                        // Log the previous track if it played ≥ 30 seconds
+                        if let pending = self.pendingTrackInfo,
+                           Date().timeIntervalSince(pending.startTime) >= 30 {
                             self.logEvent("track",
+                                slot: pending.slot,
+                                album: pending.album,
+                                artist: pending.artist,
+                                trackName: pending.trackName,
+                                trackNumber: pending.trackNumber)
+                        }
+                        // Store the new track as pending (or nil if nothing playing)
+                        if let trackKey {
+                            self.pendingTrackInfo = (
                                 slot: self.nowPlayingDiscIndex ?? 0,
                                 album: info.albumTitle,
                                 artist: info.artistName,
                                 trackName: info.trackName,
-                                trackNumber: self.nowPlayingTrackNumber)
+                                trackNumber: self.nowPlayingTrackNumber,
+                                startTime: Date()
+                            )
+                        } else {
+                            self.pendingTrackInfo = nil
                         }
                         self.lastPlaybackTrackKey = trackKey
                     }
                 case .failure:
+                    if let pending = self.pendingTrackInfo,
+                       Date().timeIntervalSince(pending.startTime) >= 30 {
+                        self.logEvent("track",
+                            slot: pending.slot,
+                            album: pending.album,
+                            artist: pending.artist,
+                            trackName: pending.trackName,
+                            trackNumber: pending.trackNumber)
+                    }
+                    self.pendingTrackInfo = nil
                     self.nowPlayingDiscIndex = nil
                     self.nowPlayingTrackNumber = nil
                     self.nowPlayingElapsedSeconds = nil
@@ -587,10 +626,29 @@ final class AppState: ObservableObject {
             if let chapter = await youtubeJS("document.querySelector('.ytp-chapter-title-content')?.textContent?.trim()") as? String, !chapter.isEmpty {
                 if chapter != lastYouTubeChapter {
                     let slot = discSlots.first { $0.slotIndex == playback.activeDiscIndex }
-                    logEvent("chapter", slot: playback.activeDiscIndex, album: slot?.albumTitle, artist: slot?.artistName, trackName: chapter, trackNumber: nowPlayingTrackNumber, youtubeURL: slot?.youtubeURL)
+                    // Log the previous chapter if it played ≥ 30 seconds
+                    if let pending = pendingChapterInfo,
+                       Date().timeIntervalSince(pending.startTime) >= 30 {
+                        logEvent("chapter", slot: pending.slot, album: pending.album, artist: pending.artist, trackName: pending.chapterName, trackNumber: pending.chapterNumber, youtubeURL: pending.youtubeURL)
+                    }
+                    // Store the new chapter as pending
+                    pendingChapterInfo = (
+                        slot: playback.activeDiscIndex,
+                        album: slot?.albumTitle,
+                        artist: slot?.artistName,
+                        chapterName: chapter,
+                        chapterNumber: nowPlayingTrackNumber,
+                        youtubeURL: slot?.youtubeURL,
+                        startTime: Date()
+                    )
                     lastYouTubeChapter = chapter
                 }
             } else {
+                if let pending = pendingChapterInfo,
+                   Date().timeIntervalSince(pending.startTime) >= 30 {
+                    logEvent("chapter", slot: pending.slot, album: pending.album, artist: pending.artist, trackName: pending.chapterName, trackNumber: pending.chapterNumber, youtubeURL: pending.youtubeURL)
+                }
+                pendingChapterInfo = nil
                 lastYouTubeChapter = nil
             }
         }
@@ -640,20 +698,106 @@ final class AppState: ObservableObject {
             let result = MusicController.shared.fetchArtwork(trackIDs: trackIDs)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                guard case .success(let data) = result,
-                      let data,
-                      !data.isEmpty else {
-                    return
-                }
                 guard let slotPosition = self.discSlots.firstIndex(where: { $0.slotIndex == slotIndex }) else {
                     return
                 }
-                var updatedSlot = self.discSlots[slotPosition]
-                guard updatedSlot.artworkPNGBase64 == nil else {
+                guard self.discSlots[slotPosition].artworkPNGBase64 == nil else {
                     return
                 }
-                updatedSlot.artworkPNGBase64 = data.base64EncodedString()
-                self.discSlots[slotPosition] = updatedSlot
+                if case .success(let data) = result, let data, !data.isEmpty {
+                    var updatedSlot = self.discSlots[slotPosition]
+                    updatedSlot.artworkPNGBase64 = data.base64EncodedString()
+                    self.discSlots[slotPosition] = updatedSlot
+                } else {
+                    let currentSlot = self.discSlots[slotPosition]
+                    if currentSlot.sourceType == "playlist", let name = currentSlot.playlistName, !name.isEmpty {
+                        self.fetchPlaylistArtworkViaMusicKit(slotIndex: slotIndex, playlistName: name)
+                    } else {
+                        self.fetchArtworkFromiTunesAPI(slotIndex: slotIndex, album: currentSlot.albumTitle, artist: currentSlot.artistName)
+                    }
+                }
+            }
+        }
+    }
+
+    private func fetchArtworkFromiTunesAPI(slotIndex: Int, album: String?, artist: String?) {
+        guard let album, !album.isEmpty else { return }
+        var terms = album
+        if let artist, !artist.isEmpty {
+            terms += " \(artist)"
+        }
+        guard let encoded = terms.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encoded)&media=music&entity=album&limit=1") else {
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let results = json["results"] as? [[String: Any]],
+                  let first = results.first,
+                  let artworkURLString = first["artworkUrl100"] as? String else {
+                return
+            }
+            let hiRes = artworkURLString.replacingOccurrences(of: "100x100bb", with: "600x600bb")
+            guard let imageURL = URL(string: hiRes) else { return }
+            URLSession.shared.dataTask(with: imageURL) { [weak self] imgData, _, _ in
+                DispatchQueue.main.async {
+                    guard let self, let imgData, !imgData.isEmpty else { return }
+                    guard let slotPosition = self.discSlots.firstIndex(where: { $0.slotIndex == slotIndex }),
+                          self.discSlots[slotPosition].artworkPNGBase64 == nil else {
+                        return
+                    }
+                    var slot = self.discSlots[slotPosition]
+                    slot.artworkPNGBase64 = imgData.base64EncodedString()
+                    self.discSlots[slotPosition] = slot
+                }
+            }.resume()
+        }.resume()
+    }
+
+    private func fetchPlaylistArtworkViaMusicKit(slotIndex: Int, playlistName: String) {
+        Task {
+            let status = await MusicAuthorization.request()
+            guard status == .authorized else {
+                await MainActor.run {
+                    // Fall back to iTunes API using the slot's album/artist info
+                    if let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) {
+                        fetchArtworkFromiTunesAPI(slotIndex: slotIndex, album: slot.albumTitle, artist: slot.artistName)
+                    }
+                }
+                return
+            }
+            do {
+                var request = MusicLibraryRequest<Playlist>()
+                request.filter(matching: \.name, equalTo: playlistName)
+                let response = try await request.response()
+                guard let playlist = response.items.first,
+                      let artwork = playlist.artwork,
+                      let artworkURL = artwork.url(width: 600, height: 600) else {
+                    await MainActor.run {
+                        if let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) {
+                            fetchArtworkFromiTunesAPI(slotIndex: slotIndex, album: slot.albumTitle, artist: slot.artistName)
+                        }
+                    }
+                    return
+                }
+                let (data, _) = try await URLSession.shared.data(from: artworkURL)
+                guard !data.isEmpty else { return }
+                await MainActor.run {
+                    guard let slotPosition = discSlots.firstIndex(where: { $0.slotIndex == slotIndex }),
+                          discSlots[slotPosition].artworkPNGBase64 == nil else {
+                        return
+                    }
+                    var slot = discSlots[slotPosition]
+                    slot.artworkPNGBase64 = data.base64EncodedString()
+                    discSlots[slotPosition] = slot
+                }
+            } catch {
+                await MainActor.run {
+                    if let slot = discSlots.first(where: { $0.slotIndex == slotIndex }) {
+                        fetchArtworkFromiTunesAPI(slotIndex: slotIndex, album: slot.albumTitle, artist: slot.artistName)
+                    }
+                }
             }
         }
     }
