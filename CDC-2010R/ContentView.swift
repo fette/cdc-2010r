@@ -314,7 +314,6 @@ private struct DiscSlotCard: View {
                             onLoad()
                         }
                     }
-                    .disabled(isActive)
                 }
 
                 if !slot.isLoaded {
@@ -324,7 +323,6 @@ private struct DiscSlotCard: View {
                             .foregroundStyle(Color.white.opacity(0.6))
                         TextField("Album, playlist, or YouTube URL", text: $searchQuery)
                             .textFieldStyle(.roundedBorder)
-                            .disabled(isActive)
                             .focused($isQueryFocused)
                             .onChange(of: searchQuery) { newValue in
                                 scheduleSearch(for: newValue)

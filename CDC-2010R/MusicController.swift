@@ -181,11 +181,26 @@ final class MusicController {
         tell application id "com.apple.Music"
             set targetAlbum to "\(safeAlbum)"
             set targetArtist to "\(safeArtist)"
-            if targetArtist is "" then
-                set albumTracks to (every track of library playlist 1 whose album is targetAlbum)
-            else
-                set albumTracks to (every track of library playlist 1 whose album is targetAlbum and artist is targetArtist)
-            end if
+            set searchResults to (search library playlist 1 for targetAlbum only albums)
+            set albumTracks to {}
+            repeat with tr in searchResults
+                try
+                    if (album of tr) is targetAlbum then
+                        if targetArtist is "" then
+                            set end of albumTracks to tr
+                        else
+                            set trArtist to ""
+                            try
+                                set trArtist to album artist of tr
+                            end try
+                            if trArtist is "" then set trArtist to artist of tr
+                            if trArtist is targetArtist then
+                                set end of albumTracks to tr
+                            end if
+                        end if
+                    end if
+                end try
+            end repeat
             if (count of albumTracks) is 0 then return {"ERROR","NO_ALBUM"}
             set trackInfoList to {}
             repeat with tr in albumTracks
@@ -634,7 +649,15 @@ final class MusicController {
             set albumName to album of t
             set artistName to artist of t
             if albumName is missing value then return {"ERROR","NO_ALBUM"}
-            set albumTracks to (every track of library playlist 1 whose album is albumName and artist is artistName)
+            set searchResults to (search library playlist 1 for albumName only albums)
+            set albumTracks to {}
+            repeat with tr in searchResults
+                try
+                    if (album of tr) is albumName then
+                        set end of albumTracks to tr
+                    end if
+                end try
+            end repeat
             if (count of albumTracks) is 0 then return {"ERROR","NO_ALBUM"}
             set trackInfoList to {}
             repeat with tr in albumTracks
