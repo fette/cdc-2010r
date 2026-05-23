@@ -331,11 +331,27 @@ final class AppState: ObservableObject {
             playDisc(slotIndex: playback.activeDiscIndex)
             return
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = MusicController.shared.playPause()
-            DispatchQueue.main.async { [weak self] in
-                if case .failure(let error) = result {
-                    self?.statusMessage = error.errorDescription
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let info = MusicController.shared.currentPlaybackInfo()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .success(let playbackInfo) = info,
+                   self.matchingSlot(
+                       trackPersistentID: playbackInfo.trackPersistentID,
+                       playlistPersistentID: playbackInfo.playlistPersistentID,
+                       albumTitle: playbackInfo.albumTitle,
+                       artistName: playbackInfo.artistName
+                   ) != nil {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let result = MusicController.shared.playPause()
+                        DispatchQueue.main.async {
+                            if case .failure(let error) = result {
+                                self.statusMessage = error.errorDescription
+                            }
+                        }
+                    }
+                } else {
+                    self.playDisc(slotIndex: self.playback.activeDiscIndex)
                 }
             }
         }

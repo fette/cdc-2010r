@@ -402,6 +402,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "CDC-2010R needs access to control Music for disc loading and playback.";
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "CDC-2010R uses your Music library to find playlist artwork.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -435,6 +436,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "CDC-2010R needs access to control Music for disc loading and playback.";
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "CDC-2010R uses your Music library to find playlist artwork.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

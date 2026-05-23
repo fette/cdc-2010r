@@ -796,9 +796,9 @@ final class MusicController {
                 }
                 return $0.discNumber < $1.discNumber
             }.map { $0.persistentID }
-            let trackNumbersByID = Dictionary(uniqueKeysWithValues: trackInfos.compactMap { info in
+            let trackNumbersByID = Dictionary(trackInfos.compactMap { info in
                 info.trackNumber > 0 ? (info.persistentID, info.trackNumber) : nil
-            })
+            }, uniquingKeysWith: { first, _ in first })
             let identifier = "album:\(artistName)|\(albumName)"
             return .success(LoadedDisc(
                 sourceType: "album",
@@ -837,9 +837,9 @@ final class MusicController {
                 }
                 return $0.discNumber < $1.discNumber
             }.map { $0.persistentID }
-            let trackNumbersByID = Dictionary(uniqueKeysWithValues: trackInfos.compactMap { info in
+            let trackNumbersByID = Dictionary(trackInfos.compactMap { info in
                 info.trackNumber > 0 ? (info.persistentID, info.trackNumber) : nil
-            })
+            }, uniquingKeysWith: { first, _ in first })
             return .success(LoadedDisc(
                 sourceType: "playlist",
                 sourceIdentifier: playlistID,
