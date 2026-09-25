@@ -26,6 +26,7 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let stateURL: URL
     private var nowPlayingTimer: AnyCancellable?
+    private var isPollingMusic = false
     private var lastPlaybackTrackKey: String?
     private var lastYouTubeChapter: String?
     private var pendingTrackInfo: (slot: Int, album: String?, artist: String?,
@@ -246,7 +247,7 @@ final class AppState: ObservableObject {
         discSlots[slotPosition] = DiscSlot(slotIndex: slotIndex)
         if nowPlayingDiscIndex == slotIndex {
             nowPlayingDiscIndex = nil
-            activeYouTubeVideoID = nil
+            stopYouTube()
         }
         statusMessage = "Removed Disc \(slotIndex)."
     }
@@ -282,9 +283,7 @@ final class AppState: ObservableObject {
             return
         }
         statusMessage = "Starting Disc \(slotIndex)..."
-        activeYouTubeVideoID = nil
-        lastYouTubeChapter = nil
-        youtubeWebView = nil
+        stopYouTube()
         DispatchQueue.global(qos: .userInitiated).async {
             let result = MusicController.shared.playDisc(trackIDs: trackIDs, discIndex: slotIndex)
             DispatchQueue.main.async { [weak self] in
@@ -513,10 +512,13 @@ final class AppState: ObservableObject {
             refreshYouTubeNowPlaying()
             return
         }
+        guard !isPollingMusic else { return }
+        isPollingMusic = true
         DispatchQueue.global(qos: .utility).async {
             let result = MusicController.shared.currentPlaybackInfo()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.isPollingMusic = false
                 switch result {
                 case .success(let info):
                     let match = self.matchingSlot(
@@ -586,6 +588,15 @@ final class AppState: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Tears down the retained web view so its audio can't outlive the disc.
+    private func stopYouTube() {
+        youtubeWebView?.pauseAllMediaPlayback()
+        youtubeWebView?.stopLoading()
+        youtubeWebView = nil
+        activeYouTubeVideoID = nil
+        lastYouTubeChapter = nil
     }
 
     @discardableResult

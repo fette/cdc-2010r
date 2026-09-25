@@ -60,6 +60,9 @@ enum MusicControllerError: LocalizedError {
 final class MusicController {
     static let shared = MusicController()
 
+    /// NSAppleScript isn't thread-safe; every script runs on this one queue.
+    private let scriptQueue = DispatchQueue(label: "CDC-2010R.MusicController.script")
+
     private init() {}
 
     func loadCurrentAlbumOrPlaylist() -> Result<LoadedDisc, MusicControllerError> {
@@ -342,6 +345,10 @@ final class MusicController {
     }
 
     func currentPlaybackInfo() -> Result<CurrentPlaybackInfo, MusicControllerError> {
+        // Sending `tell application` to a quit Music relaunches it, so check first.
+        guard isMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
         let script = """
         tell application id "com.apple.Music"
             set t to current track
@@ -755,7 +762,9 @@ final class MusicController {
             return .failure(.scriptFailed("Invalid script."))
         }
         var errorInfo: NSDictionary?
-        let result = appleScript.executeAndReturnError(&errorInfo)
+        let result = scriptQueue.sync {
+            appleScript.executeAndReturnError(&errorInfo)
+        }
         if let errorInfo {
             let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error."
             if message.localizedCaseInsensitiveContains("application isn") &&
@@ -861,7 +870,7 @@ final class MusicController {
     }
 
     private func parseTrackInfos(from descriptor: NSAppleEventDescriptor?) -> [TrackInfo] {
-        guard let descriptor else { return [] }
+        guard let descriptor, descriptor.numberOfItems > 0 else { return [] }
         var infos: [TrackInfo] = []
         for index in 1...descriptor.numberOfItems {
             guard let item = descriptor.atIndex(index),
