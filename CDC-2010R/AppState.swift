@@ -27,6 +27,8 @@ final class AppState: ObservableObject {
     private let stateURL: URL
     private var nowPlayingTimer: AnyCancellable?
     private var isPollingMusic = false
+    private let searchLock = NSLock()
+    private var searchGeneration = 0
     private var lastPlaybackTrackKey: String?
     private var lastYouTubeChapter: String?
     private var pendingTrackInfo: (slot: Int, album: String?, artist: String?,
@@ -75,8 +77,8 @@ final class AppState: ObservableObject {
 
     func loadDisc(slotIndex: Int) {
         statusMessage = "Loading from Music..."
-        _ = MusicController.shared.requestAutomationPermission()
         DispatchQueue.global(qos: .userInitiated).async {
+            _ = MusicController.shared.requestAutomationPermission()
             let result = MusicController.shared.loadCurrentAlbumOrPlaylist()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -100,8 +102,8 @@ final class AppState: ObservableObject {
 
     func loadAlbum(slotIndex: Int, album: MusicSuggestion) {
         statusMessage = "Loading \(album.title)..."
-        _ = MusicController.shared.requestAutomationPermission()
         DispatchQueue.global(qos: .userInitiated).async {
+            _ = MusicController.shared.requestAutomationPermission()
             let result = MusicController.shared.loadAlbum(albumTitle: album.title, artistName: album.artistName)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -125,8 +127,8 @@ final class AppState: ObservableObject {
 
     func loadPlaylist(slotIndex: Int, playlistID: String, playlistName: String) {
         statusMessage = "Loading \(playlistName)..."
-        _ = MusicController.shared.requestAutomationPermission()
         DispatchQueue.global(qos: .userInitiated).async {
+            _ = MusicController.shared.requestAutomationPermission()
             let result = MusicController.shared.loadPlaylist(persistentID: playlistID)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -154,10 +156,21 @@ final class AppState: ObservableObject {
             completion([])
             return
         }
-        _ = MusicController.shared.requestAutomationPermission()
+        searchLock.lock()
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchLock.unlock()
         DispatchQueue.global(qos: .userInitiated).async {
+            _ = MusicController.shared.requestAutomationPermission()
             let albumResult = MusicController.shared.searchAlbums(matching: trimmed, limit: 8)
-            let playlistResult = MusicController.shared.searchPlaylists(matching: trimmed, limit: 6)
+            self.searchLock.lock()
+            let stillCurrent = self.searchGeneration == generation
+            self.searchLock.unlock()
+            // A newer keystroke superseded this query; skip the remaining
+            // script so stale searches can't pile up on the script queue.
+            // Completion still fires so the caller never stalls.
+            let playlistResult: Result<[MusicSuggestion], MusicControllerError> =
+                stillCurrent ? MusicController.shared.searchPlaylists(matching: trimmed, limit: 6) : .success([])
             DispatchQueue.main.async { [weak self] in
                 var suggestions: [MusicSuggestion] = []
                 switch playlistResult {

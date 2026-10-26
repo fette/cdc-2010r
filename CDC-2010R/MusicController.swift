@@ -82,28 +82,37 @@ final class MusicController {
         }
     }
 
-    func searchAlbums(matching query: String, limit: Int = 10) -> Result<[MusicSuggestion], MusicControllerError> {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .success([]) }
-        guard ensureMusicRunning() else {
-            return .failure(.musicNotRunning)
-        }
-        let cappedLimit = max(1, min(limit, 25))
-        let safeQuery = appleScriptStringLiteral(trimmed)
-        let script = """
+    /// Upper bound for interactive library searches. Search scripts share the
+    /// serial script queue with polling and playback, so a stuck Music.app
+    /// must not wedge the queue behind one query.
+    static let searchScriptTimeoutSeconds = 15
+    private static let maxSearchResults = 25
+
+    /// Indexed album lookup. Uses Music's `search ... only albums` instead of a
+    /// full-library `whose` scan, which resolves every track through Cocoa
+    /// Scripting and stalls the shared script queue on large libraries.
+    static func albumSearchScript(query: String, limit: Int) -> String {
+        let cappedLimit = max(1, min(limit, maxSearchResults))
+        let safeQuery = appleScriptStringLiteral(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        return """
+        with timeout of \(searchScriptTimeoutSeconds) seconds
         tell application id "com.apple.Music"
             set queryText to "\(safeQuery)"
             set limitCount to \(cappedLimit)
-            set matches to (every track of library playlist 1 whose album contains queryText)
+            set searchResults to (search library playlist 1 for queryText only albums)
             set results to {}
             set seenKeys to {}
-            repeat with tr in matches
-                set albumName to album of tr
+            repeat with tr in searchResults
+                set albumName to ""
+                try
+                    set albumName to album of tr
+                end try
                 if albumName is missing value then set albumName to ""
                 set artistName to ""
                 try
                     set artistName to artist of tr
                 end try
+                if artistName is missing value then set artistName to ""
                 set albumKey to albumName & "||" & artistName
                 if albumName is not "" then
                     if albumKey is not in seenKeys then
@@ -115,8 +124,42 @@ final class MusicController {
             end repeat
             return {"ALBUMS", results}
         end tell
+        end timeout
         """
-        let result = run(script: script)
+    }
+
+    static func playlistSearchScript(query: String, limit: Int) -> String {
+        let cappedLimit = max(1, min(limit, maxSearchResults))
+        let safeQuery = appleScriptStringLiteral(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        return """
+        with timeout of \(searchScriptTimeoutSeconds) seconds
+        tell application id "com.apple.Music"
+            set queryText to "\(safeQuery)"
+            set limitCount to \(cappedLimit)
+            set results to {}
+            repeat with pl in user playlists
+                set plName to name of pl as text
+                if plName contains queryText then
+                    set pid to persistent ID of pl as text
+                    if pid is not "" then
+                        set end of results to {plName, pid}
+                    end if
+                end if
+                if (count of results) >= limitCount then exit repeat
+            end repeat
+            return {"PLAYLISTS", results}
+        end tell
+        end timeout
+        """
+    }
+
+    func searchAlbums(matching query: String, limit: Int = 10) -> Result<[MusicSuggestion], MusicControllerError> {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .success([]) }
+        guard ensureMusicRunning() else {
+            return .failure(.musicNotRunning)
+        }
+        let result = run(script: Self.albumSearchScript(query: trimmed, limit: limit))
         switch result {
         case .failure(let error):
             return .failure(error)
@@ -136,27 +179,7 @@ final class MusicController {
         guard ensureMusicRunning() else {
             return .failure(.musicNotRunning)
         }
-        let cappedLimit = max(1, min(limit, 25))
-        let safeQuery = appleScriptStringLiteral(trimmed)
-        let script = """
-        tell application id "com.apple.Music"
-            set queryText to "\(safeQuery)"
-            set limitCount to \(cappedLimit)
-            set results to {}
-            repeat with pl in user playlists
-                set plName to name of pl as text
-                if plName contains queryText then
-                    set pid to persistent ID of pl as text
-                    if pid is not "" then
-                        set end of results to {plName, pid}
-                    end if
-                end if
-                if (count of results) >= limitCount then exit repeat
-            end repeat
-            return {"PLAYLISTS", results}
-        end tell
-        """
-        let result = run(script: script)
+        let result = run(script: Self.playlistSearchScript(query: trimmed, limit: limit))
         switch result {
         case .failure(let error):
             return .failure(error)
@@ -178,8 +201,8 @@ final class MusicController {
         guard ensureMusicRunning() else {
             return .failure(.musicNotRunning)
         }
-        let safeAlbum = appleScriptStringLiteral(trimmedAlbum)
-        let safeArtist = appleScriptStringLiteral(artistName ?? "")
+        let safeAlbum = Self.appleScriptStringLiteral(trimmedAlbum)
+        let safeArtist = Self.appleScriptStringLiteral(artistName ?? "")
         let script = """
         tell application id "com.apple.Music"
             set targetAlbum to "\(safeAlbum)"
@@ -256,7 +279,7 @@ final class MusicController {
         guard ensureMusicRunning() else {
             return .failure(.musicNotRunning)
         }
-        let safeID = appleScriptStringLiteral(trimmedID)
+        let safeID = Self.appleScriptStringLiteral(trimmedID)
         let script = """
         tell application id "com.apple.Music"
             set pid to "\(safeID)"
@@ -470,11 +493,11 @@ final class MusicController {
         guard !trackIDs.isEmpty else {
             return .failure(.scriptFailed("Disc has no tracks."))
         }
-        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let escapedIDs = trackIDs.map { "\"\(Self.appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
         let playlistName = "CDC-2010R Disc \(discIndex)"
         let script = """
         tell application id "com.apple.Music"
-            set plName to "\(appleScriptStringLiteral(playlistName))"
+            set plName to "\(Self.appleScriptStringLiteral(playlistName))"
             if not (exists user playlist plName) then
                 make new user playlist with properties {name:plName}
             end if
@@ -510,7 +533,7 @@ final class MusicController {
         guard ensureMusicRunning() else {
             return .failure(.musicNotRunning)
         }
-        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let escapedIDs = trackIDs.map { "\"\(Self.appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
         let script = """
         tell application id "com.apple.Music"
             set idList to {\(escapedIDs)}
@@ -566,10 +589,10 @@ final class MusicController {
         guard !trackIDs.isEmpty else {
             return .failure(.scriptFailed("Playlist has no tracks."))
         }
-        let escapedIDs = trackIDs.map { "\"\(appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
+        let escapedIDs = trackIDs.map { "\"\(Self.appleScriptStringLiteral($0))\"" }.joined(separator: ", ")
         let script = """
         tell application id "com.apple.Music"
-            set plName to "\(appleScriptStringLiteral(playlistName))"
+            set plName to "\(Self.appleScriptStringLiteral(playlistName))"
             if not (exists user playlist plName) then
                 make new user playlist with properties {name:plName}
             end if
@@ -625,7 +648,9 @@ final class MusicController {
         return runSimple(script: script)
     }
 
-    @MainActor
+    /// Safe from any thread. When the system must prompt, the prompt is
+    /// presented out of process, so callers should invoke this off the main
+    /// thread to keep the UI responsive.
     func requestAutomationPermission() -> Result<Void, MusicControllerError> {
         var targetDesc = AEAddressDesc()
         let bundleID = "com.apple.Music"
@@ -758,12 +783,15 @@ final class MusicController {
     }
 
     private func run(script: String) -> Result<NSAppleEventDescriptor, MusicControllerError> {
-        guard let appleScript = NSAppleScript(source: script) else {
-            return .failure(.scriptFailed("Invalid script."))
-        }
         var errorInfo: NSDictionary?
-        let result = scriptQueue.sync {
-            appleScript.executeAndReturnError(&errorInfo)
+        // Compile and execute confined to scriptQueue; NSAppleScript must not
+        // be touched from the caller's thread.
+        let result: NSAppleEventDescriptor? = scriptQueue.sync {
+            guard let appleScript = NSAppleScript(source: script) else { return nil }
+            return appleScript.executeAndReturnError(&errorInfo)
+        }
+        guard let result else {
+            return .failure(.scriptFailed("Invalid script."))
         }
         if let errorInfo {
             let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error."
@@ -936,7 +964,7 @@ final class MusicController {
         return suggestions
     }
 
-    private func appleScriptStringLiteral(_ value: String) -> String {
+    static func appleScriptStringLiteral(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
